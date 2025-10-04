@@ -351,6 +351,1501 @@ class DomainDataManager {
       lastUpdate: analytics.lastUpdate
     }
   }
+  
+  // =============================================================================
+  // PHASE 3: CAMPAIGN TRACKING & RATE LIMITING METHODS
+  // =============================================================================
+  
+  // Check rate limits for IP and user agent
+  checkRateLimit(ip, userAgent) {
+    if (!this.data.rateLimiting.enabled) {
+      return { allowed: true }
+    }
+    
+    const now = Date.now()
+    const rateLimits = this.data.rateLimiting
+    const isBot = this.detectBot(userAgent)
+    
+    // Use bot-specific limits if detected as bot
+    const rules = isBot ? rateLimits.botLimiting : rateLimits.rules
+    
+    // Initialize rate limiting storage if not exists
+    if (!this.rateLimitStore) {
+      this.rateLimitStore = {
+        perIP: {},
+        perSession: {},
+        burst: {}
+      }
+    }
+    
+    // Check burst limit (per second)
+    const burstKey = `${ip}-${Math.floor(now / 1000)}`
+    if (!this.rateLimitStore.burst[burstKey]) {
+      this.rateLimitStore.burst[burstKey] = 0
+    }
+    
+    if (this.rateLimitStore.burst[burstKey] >= rules.burst.requests) {
+      return { 
+        allowed: false, 
+        reason: 'Burst limit exceeded', 
+        retryAfter: 1 
+      }
+    }
+    
+    // Check per-IP limit (per minute)
+    const ipKey = `${ip}-${Math.floor(now / (rules.perIP.window * 1000))}`
+    if (!this.rateLimitStore.perIP[ipKey]) {
+      this.rateLimitStore.perIP[ipKey] = 0
+    }
+    
+    if (this.rateLimitStore.perIP[ipKey] >= rules.perIP.requests) {
+      return { 
+        allowed: false, 
+        reason: 'Rate limit exceeded', 
+        retryAfter: rules.perIP.window 
+      }
+    }
+    
+    // Increment counters
+    this.rateLimitStore.burst[burstKey]++
+    this.rateLimitStore.perIP[ipKey]++
+    
+    // Clean old entries (keep only last 2 time windows)
+    this.cleanRateLimitStore(now, rules)
+    
+    return { allowed: true }
+  }
+  
+  // Clean old rate limit entries
+  cleanRateLimitStore(now, rules) {
+    const currentSecond = Math.floor(now / 1000)
+    const currentMinute = Math.floor(now / (rules.perIP.window * 1000))
+    
+    // Clean burst store (keep last 2 seconds)
+    Object.keys(this.rateLimitStore.burst).forEach(key => {
+      const keyTime = parseInt(key.split('-').pop())
+      if (keyTime < currentSecond - 2) {
+        delete this.rateLimitStore.burst[key]
+      }
+    })
+    
+    // Clean IP store (keep last 2 time windows)
+    Object.keys(this.rateLimitStore.perIP).forEach(key => {
+      const keyTime = parseInt(key.split('-').pop())
+      if (keyTime < currentMinute - 2) {
+        delete this.rateLimitStore.perIP[key]
+      }
+    })
+  }
+  
+  // Track campaign click
+  trackCampaignClick(campaignData) {
+    const { utmSource, utmMedium, utmCampaign, utmContent, utmTerm, referrer, ip, country, timestamp, customParams } = campaignData
+    
+    if (!this.data.campaigns.enabled) return
+    
+    // Create campaign key
+    const campaignKey = utmCampaign || 'direct'
+    const sourceKey = utmSource || this.parseReferrerSource(referrer) || 'direct'
+    
+    // Initialize campaign tracking
+    if (!this.data.campaigns.campaigns[campaignKey]) {
+      this.data.campaigns.campaigns[campaignKey] = {
+        name: campaignKey,
+        clicks: 0,
+        conversions: 0,
+        sources: {},
+        countries: {},
+        firstSeen: new Date(timestamp).toISOString(),
+        lastSeen: new Date(timestamp).toISOString()
+      }
+    }
+    
+    // Initialize source tracking
+    if (!this.data.campaigns.sources[sourceKey]) {
+      this.data.campaigns.sources[sourceKey] = {
+        name: sourceKey,
+        clicks: 0,
+        campaigns: {},
+        countries: {}
+      }
+    }
+    
+    // Update campaign statistics
+    const campaign = this.data.campaigns.campaigns[campaignKey]
+    campaign.clicks++
+    campaign.lastSeen = new Date(timestamp).toISOString()
+    
+    if (!campaign.sources[sourceKey]) {
+      campaign.sources[sourceKey] = 0
+    }
+    campaign.sources[sourceKey]++
+    
+    if (!campaign.countries[country]) {
+      campaign.countries[country] = 0
+    }
+    campaign.countries[country]++
+    
+    // Update source statistics
+    const source = this.data.campaigns.sources[sourceKey]
+    source.clicks++
+    
+    if (!source.campaigns[campaignKey]) {
+      source.campaigns[campaignKey] = 0
+    }
+    source.campaigns[campaignKey]++
+    
+    if (!source.countries[country]) {
+      source.countries[country] = 0
+    }
+    source.countries[country]++
+    
+    // Store detailed click data
+    const clickData = {
+      timestamp: new Date(timestamp).toISOString(),
+      ip,
+      country,
+      campaign: campaignKey,
+      source: sourceKey,
+      medium: utmMedium,
+      content: utmContent,
+      term: utmTerm,
+      referrer,
+      customParams
+    }
+    
+    // Add to recent clicks (keep last 1000)
+    if (!this.data.campaigns.recentClicks) {
+      this.data.campaigns.recentClicks = []
+    }
+    
+    this.data.campaigns.recentClicks.unshift(clickData)
+    if (this.data.campaigns.recentClicks.length > 1000) {
+      this.data.campaigns.recentClicks = this.data.campaigns.recentClicks.slice(0, 1000)
+    }
+  }
+  
+  // Parse referrer to extract source name
+  parseReferrerSource(referrer) {
+    if (!referrer) return null
+    
+    const url = referrer.toLowerCase()
+    if (url.includes('facebook.com') || url.includes('fb.com')) return 'facebook'
+    if (url.includes('google.com') || url.includes('google.')) return 'google'
+    if (url.includes('twitter.com') || url.includes('t.co')) return 'twitter'
+    if (url.includes('instagram.com')) return 'instagram'
+    if (url.includes('linkedin.com')) return 'linkedin'
+    if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube'
+    if (url.includes('tiktok.com')) return 'tiktok'
+    if (url.includes('pinterest.com')) return 'pinterest'
+    
+    // Extract domain name
+    try {
+      const domain = new URL(referrer).hostname.replace('www.', '')
+      return domain
+    } catch {
+      return 'unknown'
+    }
+  }
+  
+  // Get campaign analytics
+  getCampaignAnalytics() {
+    const campaigns = this.data.campaigns
+    
+    return {
+      enabled: campaigns.enabled,
+      totalClicks: Object.values(campaigns.campaigns).reduce((sum, c) => sum + (c.clicks || 0), 0),
+      totalCampaigns: Object.keys(campaigns.campaigns).length,
+      totalSources: Object.keys(campaigns.sources).length,
+      topCampaigns: Object.entries(campaigns.campaigns)
+        .sort(([,a], [,b]) => (b.clicks || 0) - (a.clicks || 0))
+        .slice(0, 10),
+      topSources: Object.entries(campaigns.sources)
+        .sort(([,a], [,b]) => (b.clicks || 0) - (a.clicks || 0))
+        .slice(0, 10),
+      recentClicks: campaigns.recentClicks?.slice(0, 50) || [],
+      settings: {
+        utmTracking: campaigns.utmTracking,
+        validUtmSources: campaigns.validUtmSources,
+        customParameters: campaigns.customParameters
+      }
+    }
+  }
+  
+  // Get rate limiting status
+  getRateLimitingStatus() {
+    const rateLimiting = this.data.rateLimiting
+    
+    // Calculate current load
+    let currentLoad = 0
+    if (this.rateLimitStore?.perIP) {
+      currentLoad = Object.values(this.rateLimitStore.perIP).reduce((sum, count) => sum + count, 0)
+    }
+    
+    return {
+      enabled: rateLimiting.enabled,
+      rules: rateLimiting.rules,
+      botLimiting: rateLimiting.botLimiting,
+      currentLoad,
+      alerts: this.generateRateLimitingAlerts()
+    }
+  }
+  
+  // Generate rate limiting alerts
+  generateRateLimitingAlerts() {
+    const alerts = []
+    
+    if (this.rateLimitStore?.perIP) {
+      const ipCounts = Object.values(this.rateLimitStore.perIP)
+      const maxRequests = Math.max(...ipCounts, 0)
+      const avgRequests = ipCounts.length > 0 ? ipCounts.reduce((sum, count) => sum + count, 0) / ipCounts.length : 0
+      
+      if (maxRequests > this.data.rateLimiting.rules.perIP.requests * 0.8) {
+        alerts.push({
+          type: 'warning',
+          message: `High traffic detected: ${maxRequests} requests from single IP`,
+          timestamp: new Date().toISOString()
+        })
+      }
+      
+      if (avgRequests > this.data.rateLimiting.rules.perIP.requests * 0.5) {
+        alerts.push({
+          type: 'info',
+          message: `Average load: ${Math.round(avgRequests)} requests per minute`,
+          timestamp: new Date().toISOString()
+        })
+      }
+    }
+    
+    return alerts
+  }
+  
+  // Simple bot detection
+  detectBot(userAgent) {
+    if (!userAgent) return true
+    
+    const botPatterns = [
+      /bot/i, /crawler/i, /spider/i, /scraper/i,
+      /googlebot/i, /bingbot/i, /slurp/i, /duckduckbot/i,
+      /facebookexternalhit/i, /twitterbot/i, /linkedinbot/i,
+      /whatsapp/i, /telegram/i, /curl/i, /wget/i
+    ]
+    
+    return botPatterns.some(pattern => pattern.test(userAgent))
+  }
+  
+  // =============================================================================
+  // PHASE 4: VIDEO DELIVERY SYSTEM METHODS
+  // =============================================================================
+  
+  // Add or update video
+  addVideo(videoData) {
+    const { id, title, url, description, thumbnailUrl, duration, fileSize, format, quality } = videoData
+    
+    if (!this.data.videoSystem.videos[id]) {
+      this.data.videoSystem.videos[id] = {
+        id,
+        title,
+        url,
+        description: description || '',
+        thumbnailUrl: thumbnailUrl || '',
+        duration: duration || 0,
+        fileSize: fileSize || 0,
+        format: format || 'mp4',
+        quality: quality || '720p',
+        views: 0,
+        uniqueViews: 0,
+        watchTime: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        isActive: true,
+        trackingData: {
+          viewsByCountry: {},
+          viewsByHour: {},
+          viewsByDevice: {},
+          averageWatchTime: 0,
+          dropOffPoints: {},
+          engagementRate: 0
+        }
+      }
+    } else {
+      // Update existing video
+      Object.assign(this.data.videoSystem.videos[id], {
+        title,
+        url,
+        description: description || this.data.videoSystem.videos[id].description,
+        thumbnailUrl: thumbnailUrl || this.data.videoSystem.videos[id].thumbnailUrl,
+        duration: duration || this.data.videoSystem.videos[id].duration,
+        fileSize: fileSize || this.data.videoSystem.videos[id].fileSize,
+        format: format || this.data.videoSystem.videos[id].format,
+        quality: quality || this.data.videoSystem.videos[id].quality,
+        updatedAt: new Date().toISOString()
+      })
+    }
+    
+    return this.data.videoSystem.videos[id]
+  }
+  
+  // Remove video
+  removeVideo(videoId) {
+    if (this.data.videoSystem.videos[videoId]) {
+      delete this.data.videoSystem.videos[videoId]
+      return true
+    }
+    return false
+  }
+  
+  // Get video by ID
+  getVideo(videoId) {
+    return this.data.videoSystem.videos[videoId] || null
+  }
+  
+  // Get all videos
+  getAllVideos() {
+    return Object.values(this.data.videoSystem.videos)
+  }
+  
+  // Track video view
+  trackVideoView(viewData) {
+    const { 
+      videoId, 
+      ip, 
+      country, 
+      userAgent, 
+      sessionId, 
+      watchTime = 0, 
+      dropOffTime = null,
+      isBot = false,
+      timestamp = Date.now() 
+    } = viewData
+    
+    if (!this.data.videoSystem.enabled) return false
+    
+    const video = this.data.videoSystem.videos[videoId]
+    if (!video) return false
+    
+    // Check if this should count as unique view
+    const isUniqueView = this.isUniqueVideoView(videoId, ip, sessionId, timestamp)
+    
+    // Update video statistics
+    video.views++
+    if (isUniqueView && !isBot) {
+      video.uniqueViews++
+    }
+    
+    // Update watch time
+    if (watchTime > 0) {
+      video.watchTime += watchTime
+      video.trackingData.averageWatchTime = video.watchTime / video.views
+      
+      // Calculate engagement rate (% of video watched)
+      if (video.duration > 0) {
+        const engagementPercent = (watchTime / video.duration) * 100
+        video.trackingData.engagementRate = 
+          (video.trackingData.engagementRate * (video.views - 1) + engagementPercent) / video.views
+      }
+    }
+    
+    // Track drop-off point
+    if (dropOffTime !== null && video.duration > 0) {
+      const dropOffPercent = Math.floor((dropOffTime / video.duration) * 100)
+      if (!video.trackingData.dropOffPoints[dropOffPercent]) {
+        video.trackingData.dropOffPoints[dropOffPercent] = 0
+      }
+      video.trackingData.dropOffPoints[dropOffPercent]++
+    }
+    
+    // Update country statistics
+    if (!video.trackingData.viewsByCountry[country]) {
+      video.trackingData.viewsByCountry[country] = 0
+    }
+    video.trackingData.viewsByCountry[country]++
+    
+    // Update hourly statistics
+    const hour = new Date(timestamp).getHours()
+    if (!video.trackingData.viewsByHour[hour]) {
+      video.trackingData.viewsByHour[hour] = 0
+    }
+    video.trackingData.viewsByHour[hour]++
+    
+    // Update device statistics
+    const device = this.detectDevice(userAgent)
+    if (!video.trackingData.viewsByDevice[device]) {
+      video.trackingData.viewsByDevice[device] = 0
+    }
+    video.trackingData.viewsByDevice[device]++
+    
+    // Update global video analytics
+    this.data.videoSystem.analytics.totalViews++
+    if (isUniqueView && !isBot) {
+      this.data.videoSystem.analytics.uniqueViews++
+    }
+    
+    // Update global country stats
+    if (!this.data.videoSystem.analytics.viewsByCountry[country]) {
+      this.data.videoSystem.analytics.viewsByCountry[country] = 0
+    }
+    this.data.videoSystem.analytics.viewsByCountry[country]++
+    
+    // Store view record for detailed tracking
+    if (!this.data.videoSystem.recentViews) {
+      this.data.videoSystem.recentViews = []
+    }
+    
+    this.data.videoSystem.recentViews.unshift({
+      videoId,
+      ip,
+      country,
+      userAgent,
+      sessionId,
+      watchTime,
+      dropOffTime,
+      isBot,
+      isUniqueView,
+      timestamp: new Date(timestamp).toISOString()
+    })
+    
+    // Keep only last 1000 views
+    if (this.data.videoSystem.recentViews.length > 1000) {
+      this.data.videoSystem.recentViews = this.data.videoSystem.recentViews.slice(0, 1000)
+    }
+    
+    video.updatedAt = new Date().toISOString()
+    return true
+  }
+  
+  // Check if this is a unique video view
+  isUniqueVideoView(videoId, ip, sessionId, timestamp) {
+    if (!this.data.videoSystem.viewTracking.preventMultipleViews) {
+      return true
+    }
+    
+    const trackingWindow = this.data.videoSystem.viewTracking.trackingWindow * 1000 // Convert to ms
+    const cutoffTime = timestamp - trackingWindow
+    
+    // Check recent views for this video from same IP/session
+    const recentViews = this.data.videoSystem.recentViews || []
+    
+    return !recentViews.some(view => 
+      view.videoId === videoId &&
+      (view.ip === ip || view.sessionId === sessionId) &&
+      new Date(view.timestamp).getTime() > cutoffTime
+    )
+  }
+  
+  // Detect device type from user agent
+  detectDevice(userAgent) {
+    if (!userAgent) return 'unknown'
+    
+    const ua = userAgent.toLowerCase()
+    if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) return 'mobile'
+    if (ua.includes('tablet') || ua.includes('ipad')) return 'tablet'
+    if (ua.includes('smart-tv') || ua.includes('roku') || ua.includes('chromecast')) return 'tv'
+    return 'desktop'
+  }
+  
+  // Get video analytics
+  getVideoAnalytics() {
+    const videos = this.getAllVideos()
+    
+    return {
+      enabled: this.data.videoSystem.enabled,
+      totalVideos: videos.length,
+      activeVideos: videos.filter(v => v.isActive).length,
+      totalViews: this.data.videoSystem.analytics.totalViews,
+      uniqueViews: this.data.videoSystem.analytics.uniqueViews,
+      totalWatchTime: videos.reduce((sum, v) => sum + (v.watchTime || 0), 0),
+      averageEngagement: videos.length > 0 ? 
+        videos.reduce((sum, v) => sum + (v.trackingData.engagementRate || 0), 0) / videos.length : 0,
+      topVideos: videos
+        .sort((a, b) => (b.views || 0) - (a.views || 0))
+        .slice(0, 10)
+        .map(v => ({
+          id: v.id,
+          title: v.title,
+          views: v.views,
+          uniqueViews: v.uniqueViews,
+          watchTime: v.watchTime,
+          engagementRate: v.trackingData.engagementRate || 0
+        })),
+      viewsByCountry: this.data.videoSystem.analytics.viewsByCountry,
+      recentViews: (this.data.videoSystem.recentViews || []).slice(0, 50),
+      settings: {
+        storage: this.data.videoSystem.storage,
+        viewTracking: this.data.videoSystem.viewTracking
+      }
+    }
+  }
+  
+  // Get video access URL with security token
+  getVideoAccessUrl(videoId, visitorInfo) {
+    const { ip, country, userAgent, isBot } = visitorInfo
+    const video = this.getVideo(videoId)
+    
+    if (!video || !video.isActive) {
+      return null
+    }
+    
+    // Check if video access is allowed based on geo/time controls
+    const accessCheck = checkDomainAccess(this, visitorInfo)
+    if (!accessCheck.allowed) {
+      return null
+    }
+    
+    // Generate secure access token
+    const accessToken = this.generateVideoAccessToken(videoId, ip, country)
+    
+    // Return video URL with access token
+    return {
+      videoUrl: video.url,
+      accessToken,
+      thumbnailUrl: video.thumbnailUrl,
+      title: video.title,
+      duration: video.duration,
+      quality: video.quality,
+      format: video.format
+    }
+  }
+  
+  // Generate secure access token for video
+  generateVideoAccessToken(videoId, ip, country) {
+    const timestamp = Date.now()
+    const expiresAt = timestamp + (3600 * 1000) // 1 hour expiry
+    
+    // Simple token generation (in production, use proper JWT or similar)
+    const tokenData = {
+      videoId,
+      ip,
+      country,
+      timestamp,
+      expiresAt
+    }
+    
+    return Buffer.from(JSON.stringify(tokenData)).toString('base64')
+  }
+  
+  // Validate video access token
+  validateVideoAccessToken(token, ip) {
+    try {
+      const tokenData = JSON.parse(Buffer.from(token, 'base64').toString())
+      const now = Date.now()
+      
+      // Check if token is expired
+      if (now > tokenData.expiresAt) {
+        return false
+      }
+      
+      // Check if IP matches (optional, for extra security)
+      if (tokenData.ip !== ip) {
+        return false
+      }
+      
+      return tokenData
+    } catch {
+      return false
+    }
+  }
+  
+  // =============================================================================
+  // PHASE 5: ADVANCED SECURITY RULES METHODS
+  // =============================================================================
+  
+  // Add custom security rule
+  addSecurityRule(ruleData) {
+    const { name, condition, action, priority = 5, enabled = true } = ruleData
+    
+    const rule = {
+      id: Date.now().toString() + Math.random().toString(36).substring(7),
+      name,
+      condition, // { field, operator, value, logic }
+      action, // { type, parameters }
+      priority, // 1-10 (1 = highest priority)
+      enabled,
+      triggered: 0,
+      lastTriggered: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+    
+    this.data.securityRules.customRules.push(rule)
+    
+    // Sort by priority (lower number = higher priority)
+    this.data.securityRules.customRules.sort((a, b) => a.priority - b.priority)
+    
+    return rule
+  }
+  
+  // Remove security rule
+  removeSecurityRule(ruleId) {
+    const index = this.data.securityRules.customRules.findIndex(rule => rule.id === ruleId)
+    if (index !== -1) {
+      this.data.securityRules.customRules.splice(index, 1)
+      return true
+    }
+    return false
+  }
+  
+  // Update security rule
+  updateSecurityRule(ruleId, updates) {
+    const rule = this.data.securityRules.customRules.find(r => r.id === ruleId)
+    if (rule) {
+      Object.assign(rule, updates, { updatedAt: new Date().toISOString() })
+      return rule
+    }
+    return null
+  }
+  
+  // Evaluate security rules for visitor
+  evaluateSecurityRules(visitorData) {
+    if (!this.data.securityRules.enabled) {
+      return { allowed: true, actions: [] }
+    }
+    
+    const results = []
+    const triggeredActions = []
+    
+    for (const rule of this.data.securityRules.customRules) {
+      if (!rule.enabled) continue
+      
+      const matched = this.evaluateRuleCondition(rule.condition, visitorData)
+      
+      if (matched) {
+        rule.triggered++
+        rule.lastTriggered = new Date().toISOString()
+        
+        results.push({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          action: rule.action
+        })
+        
+        triggeredActions.push(rule.action)
+        
+        // If action is 'block', stop processing further rules
+        if (rule.action.type === 'block') {
+          return {
+            allowed: false,
+            reason: `Blocked by security rule: ${rule.name}`,
+            triggeredRules: results,
+            actions: triggeredActions
+          }
+        }
+      }
+    }
+    
+    return {
+      allowed: true,
+      triggeredRules: results,
+      actions: triggeredActions
+    }
+  }
+  
+  // Evaluate individual rule condition
+  evaluateRuleCondition(condition, visitorData) {
+    const { field, operator, value, logic = 'AND' } = condition
+    
+    // Handle complex conditions with multiple clauses
+    if (Array.isArray(condition)) {
+      if (logic === 'OR') {
+        return condition.some(cond => this.evaluateRuleCondition(cond, visitorData))
+      } else {
+        return condition.every(cond => this.evaluateRuleCondition(cond, visitorData))
+      }
+    }
+    
+    const fieldValue = this.getVisitorFieldValue(field, visitorData)
+    
+    switch (operator) {
+      case 'equals':
+        return fieldValue === value
+      case 'not_equals':
+        return fieldValue !== value
+      case 'contains':
+        return String(fieldValue).toLowerCase().includes(String(value).toLowerCase())
+      case 'not_contains':
+        return !String(fieldValue).toLowerCase().includes(String(value).toLowerCase())
+      case 'starts_with':
+        return String(fieldValue).toLowerCase().startsWith(String(value).toLowerCase())
+      case 'ends_with':
+        return String(fieldValue).toLowerCase().endsWith(String(value).toLowerCase())
+      case 'matches_regex':
+        try {
+          const regex = new RegExp(value, 'i')
+          return regex.test(String(fieldValue))
+        } catch {
+          return false
+        }
+      case 'greater_than':
+        return parseFloat(fieldValue) > parseFloat(value)
+      case 'less_than':
+        return parseFloat(fieldValue) < parseFloat(value)
+      case 'in_list':
+        return Array.isArray(value) && value.includes(fieldValue)
+      case 'not_in_list':
+        return Array.isArray(value) && !value.includes(fieldValue)
+      default:
+        return false
+    }
+  }
+  
+  // Get visitor field value for rule evaluation
+  getVisitorFieldValue(field, visitorData) {
+    const { ip, country, userAgent, referrer, sessionId, timestamp, isBot } = visitorData
+    
+    switch (field) {
+      case 'ip':
+        return ip
+      case 'country':
+        return country
+      case 'user_agent':
+        return userAgent || ''
+      case 'referrer':
+        return referrer || ''
+      case 'session_id':
+        return sessionId
+      case 'is_bot':
+        return isBot
+      case 'hour':
+        return new Date(timestamp).getHours()
+      case 'day_of_week':
+        return new Date(timestamp).getDay()
+      case 'request_count':
+        // Count requests from this IP in last hour
+        const hourAgo = timestamp - (3600 * 1000)
+        return (this.data.analytics.recentVisitors || [])
+          .filter(v => v.ip === ip && new Date(v.timestamp).getTime() > hourAgo).length
+      case 'browser':
+        return this.detectBrowser(userAgent)
+      case 'device':
+        return this.detectDevice(userAgent)
+      case 'os':
+        return this.detectOS(userAgent)
+      default:
+        return null
+    }
+  }
+  
+  // Detect browser from user agent
+  detectBrowser(userAgent) {
+    if (!userAgent) return 'unknown'
+    
+    const ua = userAgent.toLowerCase()
+    if (ua.includes('chrome') && !ua.includes('edg')) return 'chrome'
+    if (ua.includes('firefox')) return 'firefox'
+    if (ua.includes('safari') && !ua.includes('chrome')) return 'safari'
+    if (ua.includes('edg')) return 'edge'
+    if (ua.includes('opera')) return 'opera'
+    return 'unknown'
+  }
+  
+  // Detect OS from user agent
+  detectOS(userAgent) {
+    if (!userAgent) return 'unknown'
+    
+    const ua = userAgent.toLowerCase()
+    if (ua.includes('windows')) return 'windows'
+    if (ua.includes('mac')) return 'macos'
+    if (ua.includes('linux')) return 'linux'
+    if (ua.includes('android')) return 'android'
+    if (ua.includes('iphone') || ua.includes('ipad')) return 'ios'
+    return 'unknown'
+  }
+  
+  // Add honeypot trap
+  addHoneypot(honeypotData) {
+    const { url, triggers, actions, description } = honeypotData
+    
+    const honeypot = {
+      id: Date.now().toString() + Math.random().toString(36).substring(7),
+      url,
+      triggers, // { condition, threshold }
+      actions, // { type, parameters }
+      description,
+      hits: 0,
+      lastHit: null,
+      createdAt: new Date().toISOString(),
+      enabled: true
+    }
+    
+    this.data.securityRules.honeypots.push(honeypot)
+    return honeypot
+  }
+  
+  // Check if URL is honeypot
+  checkHoneypot(url, visitorData) {
+    const honeypot = this.data.securityRules.honeypots.find(h => h.enabled && h.url === url)
+    
+    if (honeypot) {
+      honeypot.hits++
+      honeypot.lastHit = new Date().toISOString()
+      
+      // Log honeypot hit
+      this.logSecurityEvent({
+        type: 'honeypot_hit',
+        honeypotId: honeypot.id,
+        url,
+        visitorData,
+        timestamp: new Date().toISOString()
+      })
+      
+      return {
+        isHoneypot: true,
+        honeypot,
+        actions: honeypot.actions
+      }
+    }
+    
+    return { isHoneypot: false }
+  }
+  
+  // Analyze visitor behavior patterns
+  analyzeBehavior(visitorData) {
+    if (!this.data.securityRules.behaviorAnalysis.enabled) {
+      return { suspicious: false, score: 0 }
+    }
+    
+    const { ip, userAgent, timestamp, sessionId } = visitorData
+    let suspiciousScore = 0
+    const reasons = []
+    
+    // Get recent activity for this IP
+    const recentActivity = (this.data.analytics.recentVisitors || [])
+      .filter(v => v.ip === ip)
+      .slice(0, 100)
+    
+    // Pattern 1: High request frequency
+    const lastMinute = timestamp - (60 * 1000)
+    const recentRequests = recentActivity.filter(v => new Date(v.timestamp).getTime() > lastMinute)
+    
+    if (recentRequests.length > 10) {
+      suspiciousScore += 30
+      reasons.push('High request frequency')
+    }
+    
+    // Pattern 2: Suspicious user agent patterns
+    if (userAgent) {
+      const suspiciousPatterns = [
+        /python/i, /curl/i, /wget/i, /scrapy/i, /selenium/i,
+        /phantomjs/i, /headless/i, /automation/i
+      ]
+      
+      if (suspiciousPatterns.some(pattern => pattern.test(userAgent))) {
+        suspiciousScore += 40
+        reasons.push('Suspicious user agent')
+      }
+      
+      // Check for missing common browser indicators
+      if (!userAgent.includes('Mozilla') || userAgent.length < 50) {
+        suspiciousScore += 20
+        reasons.push('Unusual user agent structure')
+      }
+    }
+    
+    // Pattern 3: Sequential access patterns (potential scraping)
+    if (recentActivity.length > 5) {
+      const intervals = []
+      for (let i = 1; i < Math.min(recentActivity.length, 10); i++) {
+        const diff = new Date(recentActivity[i-1].timestamp).getTime() - 
+                    new Date(recentActivity[i].timestamp).getTime()
+        intervals.push(diff)
+      }
+      
+      // Check for very regular intervals (bot-like behavior)
+      const avgInterval = intervals.reduce((sum, interval) => sum + interval, 0) / intervals.length
+      const variance = intervals.reduce((sum, interval) => sum + Math.pow(interval - avgInterval, 2), 0) / intervals.length
+      
+      if (variance < avgInterval * 0.1 && avgInterval < 5000) { // Very regular, fast requests
+        suspiciousScore += 35
+        reasons.push('Regular sequential access pattern')
+      }
+    }
+    
+    // Pattern 4: Multiple session IDs from same IP
+    const uniqueSessions = [...new Set(recentActivity.map(v => v.sessionId))].length
+    if (uniqueSessions > 5) {
+      suspiciousScore += 25
+      reasons.push('Multiple sessions from same IP')
+    }
+    
+    // Pattern 5: No referrer on multiple requests
+    const noReferrerCount = recentActivity.filter(v => !v.referer || v.referer === '').length
+    if (noReferrerCount > recentActivity.length * 0.8 && recentActivity.length > 3) {
+      suspiciousScore += 15
+      reasons.push('Consistently missing referrer')
+    }
+    
+    return {
+      suspicious: suspiciousScore >= 50,
+      score: Math.min(suspiciousScore, 100),
+      reasons,
+      riskLevel: suspiciousScore >= 80 ? 'high' : suspiciousScore >= 50 ? 'medium' : 'low'
+    }
+  }
+  
+  // Log security event
+  logSecurityEvent(eventData) {
+    if (!this.data.securityRules.events) {
+      this.data.securityRules.events = []
+    }
+    
+    this.data.securityRules.events.unshift({
+      id: Date.now().toString() + Math.random().toString(36).substring(7),
+      ...eventData
+    })
+    
+    // Keep only last 1000 events
+    if (this.data.securityRules.events.length > 1000) {
+      this.data.securityRules.events = this.data.securityRules.events.slice(0, 1000)
+    }
+  }
+  
+  // Get security analytics
+  getSecurityAnalytics() {
+    const rules = this.data.securityRules.customRules || []
+    const honeypots = this.data.securityRules.honeypots || []
+    const events = this.data.securityRules.events || []
+    
+    const now = Date.now()
+    const last24Hours = now - (24 * 60 * 60 * 1000)
+    const recentEvents = events.filter(e => new Date(e.timestamp).getTime() > last24Hours)
+    
+    return {
+      enabled: this.data.securityRules.enabled,
+      totalRules: rules.length,
+      activeRules: rules.filter(r => r.enabled).length,
+      totalHoneypots: honeypots.length,
+      activeHoneypots: honeypots.filter(h => h.enabled).length,
+      behaviorAnalysisEnabled: this.data.securityRules.behaviorAnalysis.enabled,
+      
+      // Statistics
+      totalEvents: events.length,
+      eventsLast24h: recentEvents.length,
+      totalTriggered: rules.reduce((sum, r) => sum + (r.triggered || 0), 0),
+      totalHoneypotHits: honeypots.reduce((sum, h) => sum + (h.hits || 0), 0),
+      
+      // Recent activity
+      recentEvents: events.slice(0, 50),
+      topTriggeredRules: rules
+        .filter(r => r.triggered > 0)
+        .sort((a, b) => (b.triggered || 0) - (a.triggered || 0))
+        .slice(0, 10),
+      
+      // Event types breakdown
+      eventTypes: this.groupEventsByType(recentEvents),
+      
+      // Risk levels
+      riskLevels: this.calculateRiskLevels(recentEvents)
+    }
+  }
+  
+  // Group events by type
+  groupEventsByType(events) {
+    const types = {}
+    events.forEach(event => {
+      types[event.type] = (types[event.type] || 0) + 1
+    })
+    return types
+  }
+  
+  // Calculate risk level distribution
+  calculateRiskLevels(events) {
+    const levels = { low: 0, medium: 0, high: 0 }
+    
+    events.forEach(event => {
+      if (event.riskLevel) {
+        levels[event.riskLevel] = (levels[event.riskLevel] || 0) + 1
+      }
+    })
+    
+    return levels
+  }
+  
+  // =============================================================================
+  // PHASE 6: HOOK SYSTEM & INTEGRATIONS METHODS
+  // =============================================================================
+  
+  // Add webhook configuration
+  addWebhook(webhookData) {
+    const { name, url, events, headers = {}, enabled = true, secret = null } = webhookData
+    
+    if (!this.data.integrations) {
+      this.data.integrations = {
+        webhooks: [],
+        customScripts: [],
+        apiConnections: []
+      }
+    }
+    
+    const webhook = {
+      id: Date.now().toString() + Math.random().toString(36).substring(7),
+      name,
+      url,
+      events, // Array of event types to trigger on
+      headers, // Custom headers to send
+      secret, // Optional secret for webhook verification
+      enabled,
+      totalCalls: 0,
+      successfulCalls: 0,
+      failedCalls: 0,
+      lastCall: null,
+      lastError: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+    
+    this.data.integrations.webhooks.push(webhook)
+    return webhook
+  }
+  
+  // Trigger webhooks for specific events
+  async triggerWebhooks(eventType, eventData) {
+    if (!this.data.integrations?.webhooks) return
+    
+    const relevantWebhooks = this.data.integrations.webhooks.filter(
+      webhook => webhook.enabled && webhook.events.includes(eventType)
+    )
+    
+    const results = []
+    
+    for (const webhook of relevantWebhooks) {
+      try {
+        // Prepare webhook payload
+        const payload = {
+          event: eventType,
+          domain: this.domainName,
+          timestamp: new Date().toISOString(),
+          data: eventData
+        }
+        
+        // Add webhook signature if secret is configured
+        const headers = { ...webhook.headers, 'Content-Type': 'application/json' }
+        if (webhook.secret) {
+          // In production, use proper HMAC-SHA256 signature
+          headers['X-Webhook-Signature'] = `sha256=${webhook.secret}`
+        }
+        
+        // Make webhook call (in production environment)
+        const response = await this.makeWebhookCall(webhook.url, payload, headers)
+        
+        // Update webhook statistics
+        webhook.totalCalls++
+        webhook.successfulCalls++
+        webhook.lastCall = new Date().toISOString()
+        webhook.lastError = null
+        
+        results.push({ webhook: webhook.id, success: true, response })
+        
+      } catch (error) {
+        webhook.totalCalls++
+        webhook.failedCalls++
+        webhook.lastCall = new Date().toISOString()
+        webhook.lastError = error.message
+        
+        results.push({ webhook: webhook.id, success: false, error: error.message })
+      }
+    }
+    
+    return results
+  }
+  
+  // Make actual webhook HTTP call (simulated in development)
+  async makeWebhookCall(url, payload, headers) {
+    // In development, we simulate the call
+    console.log(`[Webhook] Calling ${url}:`, payload)
+    
+    // In production, this would be:
+    // const response = await fetch(url, {
+    //   method: 'POST',
+    //   headers,
+    //   body: JSON.stringify(payload)
+    // })
+    // return await response.json()
+    
+    // Simulate successful response
+    return { success: true, received: true }
+  }
+  
+  // Add custom script
+  addCustomScript(scriptData) {
+    const { name, event, code, enabled = true, language = 'javascript' } = scriptData
+    
+    if (!this.data.integrations) {
+      this.data.integrations = { webhooks: [], customScripts: [], apiConnections: [] }
+    }
+    
+    const script = {
+      id: Date.now().toString() + Math.random().toString(36).substring(7),
+      name,
+      event, // Event that triggers this script
+      code, // The actual script code
+      language, // javascript, python, etc.
+      enabled,
+      executions: 0,
+      successfulExecutions: 0,
+      failedExecutions: 0,
+      lastExecution: null,
+      lastError: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+    
+    this.data.integrations.customScripts.push(script)
+    return script
+  }
+  
+  // Execute custom scripts for specific events
+  async executeCustomScripts(eventType, eventData) {
+    if (!this.data.integrations?.customScripts) return
+    
+    const relevantScripts = this.data.integrations.customScripts.filter(
+      script => script.enabled && script.event === eventType
+    )
+    
+    const results = []
+    
+    for (const script of relevantScripts) {
+      try {
+        script.executions++
+        
+        // Execute script (sandboxed execution in production)
+        const result = await this.executeScript(script, eventData)
+        
+        script.successfulExecutions++
+        script.lastExecution = new Date().toISOString()
+        script.lastError = null
+        
+        results.push({ script: script.id, success: true, result })
+        
+      } catch (error) {
+        script.failedExecutions++
+        script.lastExecution = new Date().toISOString()
+        script.lastError = error.message
+        
+        results.push({ script: script.id, success: false, error: error.message })
+      }
+    }
+    
+    return results
+  }
+  
+  // Execute individual script (sandboxed)
+  async executeScript(script, eventData) {
+    console.log(`[CustomScript] Executing ${script.name}:`, eventData)
+    
+    // In production, this would use a proper sandboxed execution environment
+    // For now, we simulate script execution
+    
+    try {
+      // Create safe execution context
+      const context = {
+        event: eventData,
+        domain: this.domainName,
+        console: { log: (msg) => console.log(`[Script:${script.name}]`, msg) },
+        fetch: this.securedFetch.bind(this), // Secured fetch for API calls
+        utils: {
+          formatDate: (date) => new Date(date).toISOString(),
+          generateId: () => Date.now().toString() + Math.random().toString(36).substring(7)
+        }
+      }
+      
+      // In production: use vm or isolated-vm for safe execution
+      // const result = vm.runInNewContext(script.code, context)
+      
+      // For development, simulate script result
+      return { executed: true, context: Object.keys(context) }
+      
+    } catch (error) {
+      throw new Error(`Script execution failed: ${error.message}`)
+    }
+  }
+  
+  // Add API connection
+  addApiConnection(connectionData) {
+    const { name, type, baseUrl, apiKey, headers = {}, enabled = true } = connectionData
+    
+    if (!this.data.integrations) {
+      this.data.integrations = { webhooks: [], customScripts: [], apiConnections: [] }
+    }
+    
+    const connection = {
+      id: Date.now().toString() + Math.random().toString(36).substring(7),
+      name,
+      type, // 'crm', 'analytics', 'marketing', 'slack', 'discord', etc.
+      baseUrl,
+      apiKey, // Encrypted in production
+      headers,
+      enabled,
+      totalCalls: 0,
+      successfulCalls: 0,
+      failedCalls: 0,
+      lastCall: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+    
+    this.data.integrations.apiConnections.push(connection)
+    return connection
+  }
+  
+  // Make API call through connection
+  async callApi(connectionId, endpoint, method = 'GET', data = null) {
+    const connection = this.data.integrations?.apiConnections?.find(c => c.id === connectionId)
+    if (!connection || !connection.enabled) {
+      throw new Error('API connection not found or disabled')
+    }
+    
+    try {
+      const url = `${connection.baseUrl}${endpoint}`
+      const headers = {
+        ...connection.headers,
+        'Authorization': `Bearer ${connection.apiKey}`,
+        'Content-Type': 'application/json'
+      }
+      
+      connection.totalCalls++
+      
+      // Make API call (simulated in development)
+      const response = await this.securedFetch(url, {
+        method,
+        headers,
+        body: data ? JSON.stringify(data) : undefined
+      })
+      
+      connection.successfulCalls++
+      connection.lastCall = new Date().toISOString()
+      
+      return response
+      
+    } catch (error) {
+      connection.failedCalls++
+      connection.lastCall = new Date().toISOString()
+      throw error
+    }
+  }
+  
+  // Secured fetch wrapper for API calls
+  async securedFetch(url, options = {}) {
+    console.log(`[API Call] ${options.method || 'GET'} ${url}`)
+    
+    // In production, this would make actual API calls
+    // const response = await fetch(url, options)
+    // return await response.json()
+    
+    // For development, simulate API response
+    return { success: true, data: 'Simulated API response' }
+  }
+  
+  // Get integration analytics
+  getIntegrationAnalytics() {
+    const webhooks = this.data.integrations?.webhooks || []
+    const scripts = this.data.integrations?.customScripts || []
+    const apiConnections = this.data.integrations?.apiConnections || []
+    
+    return {
+      webhooks: {
+        total: webhooks.length,
+        enabled: webhooks.filter(w => w.enabled).length,
+        totalCalls: webhooks.reduce((sum, w) => sum + (w.totalCalls || 0), 0),
+        successRate: this.calculateSuccessRate(webhooks, 'totalCalls', 'successfulCalls')
+      },
+      customScripts: {
+        total: scripts.length,
+        enabled: scripts.filter(s => s.enabled).length,
+        totalExecutions: scripts.reduce((sum, s) => sum + (s.executions || 0), 0),
+        successRate: this.calculateSuccessRate(scripts, 'executions', 'successfulExecutions')
+      },
+      apiConnections: {
+        total: apiConnections.length,
+        enabled: apiConnections.filter(c => c.enabled).length,
+        totalCalls: apiConnections.reduce((sum, c) => sum + (c.totalCalls || 0), 0),
+        successRate: this.calculateSuccessRate(apiConnections, 'totalCalls', 'successfulCalls')
+      }
+    }
+  }
+  
+  // Calculate success rate
+  calculateSuccessRate(items, totalField, successField) {
+    const total = items.reduce((sum, item) => sum + (item[totalField] || 0), 0)
+    const successful = items.reduce((sum, item) => sum + (item[successField] || 0), 0)
+    return total > 0 ? Math.round((successful / total) * 100) : 0
+  }
+  
+  // Event system - trigger all integrations for an event
+  async triggerEvent(eventType, eventData) {
+    const results = {
+      webhooks: [],
+      customScripts: [],
+      timestamp: new Date().toISOString()
+    }
+    
+    try {
+      // Trigger webhooks
+      results.webhooks = await this.triggerWebhooks(eventType, eventData)
+      
+      // Execute custom scripts
+      results.customScripts = await this.executeCustomScripts(eventType, eventData)
+      
+      // Log the event execution
+      console.log(`[Event System] Triggered ${eventType} for ${this.domainName}:`, results)
+      
+    } catch (error) {
+      console.error(`[Event System] Error triggering ${eventType}:`, error)
+    }
+    
+    return results
+  }
+}
+
+// Available countries for geographic controls
+const AVAILABLE_COUNTRIES = [
+  { code: 'US', name: 'United States', flag: '🇺🇸' },
+  { code: 'CA', name: 'Canada', flag: '🇨🇦' },
+  { code: 'GB', name: 'United Kingdom', flag: '🇬🇧' },
+  { code: 'DE', name: 'Germany', flag: '🇩🇪' },
+  { code: 'FR', name: 'France', flag: '🇫🇷' },
+  { code: 'IT', name: 'Italy', flag: '🇮🇹' },
+  { code: 'ES', name: 'Spain', flag: '🇪🇸' },
+  { code: 'NL', name: 'Netherlands', flag: '🇳🇱' },
+  { code: 'AU', name: 'Australia', flag: '🇦🇺' },
+  { code: 'JP', name: 'Japan', flag: '🇯🇵' },
+  { code: 'KR', name: 'South Korea', flag: '🇰🇷' },
+  { code: 'SG', name: 'Singapore', flag: '🇸🇬' },
+  { code: 'BR', name: 'Brazil', flag: '🇧🇷' },
+  { code: 'MX', name: 'Mexico', flag: '🇲🇽' },
+  { code: 'AR', name: 'Argentina', flag: '🇦🇷' },
+  { code: 'IN', name: 'India', flag: '🇮🇳' },
+  { code: 'CN', name: 'China', flag: '🇨🇳' },
+  { code: 'RU', name: 'Russia', flag: '🇷🇺' },
+  { code: 'TR', name: 'Turkey', flag: '🇹🇷' },
+  { code: 'EG', name: 'Egypt', flag: '🇪🇬' },
+  { code: 'ZA', name: 'South Africa', flag: '🇿🇦' }
+]
+
+// Available timezones
+const AVAILABLE_TIMEZONES = [
+  { value: 'UTC', name: 'UTC (Coordinated Universal Time)' },
+  { value: 'America/New_York', name: 'Eastern Time (ET)' },
+  { value: 'America/Los_Angeles', name: 'Pacific Time (PT)' },
+  { value: 'America/Chicago', name: 'Central Time (CT)' },
+  { value: 'Europe/London', name: 'Greenwich Mean Time (GMT)' },
+  { value: 'Europe/Berlin', name: 'Central European Time (CET)' },
+  { value: 'Europe/Istanbul', name: 'Turkey Time (TRT)' },
+  { value: 'Asia/Tokyo', name: 'Japan Standard Time (JST)' },
+  { value: 'Asia/Shanghai', name: 'China Standard Time (CST)' },
+  { value: 'Asia/Dubai', name: 'Gulf Standard Time (GST)' },
+  { value: 'Australia/Sydney', name: 'Australian Eastern Time (AET)' }
+]
+
+// Check domain access based on geographic and time controls
+function checkDomainAccess(dataManager, visitorInfo) {
+  const { ip, country, userAgent, timestamp } = visitorInfo
+  const geoControls = dataManager.data.geoControls
+  const timeControls = dataManager.data.timeControls
+  
+  const result = {
+    allowed: true,
+    reason: null,
+    redirect: null,
+    summary: {
+      geoCheck: 'passed',
+      timeCheck: 'passed',
+      finalDecision: 'allow'
+    }
+  }
+  
+  // Check geographic controls
+  if (geoControls.enabled) {
+    // Check if country is blocked
+    if (geoControls.blockedCountries.includes(country)) {
+      result.allowed = false
+      result.reason = `Country ${country} is blocked`
+      result.summary.geoCheck = 'blocked'
+      result.summary.finalDecision = 'block'
+      return result
+    }
+    
+    // Check if only allowed countries are specified and visitor is not in list
+    if (geoControls.allowedCountries.length > 0 && !geoControls.allowedCountries.includes(country)) {
+      if (geoControls.defaultAction === 'block') {
+        result.allowed = false
+        result.reason = `Country ${country} not in allowed list`
+        result.summary.geoCheck = 'blocked'
+        result.summary.finalDecision = 'block'
+        return result
+      }
+    }
+    
+    // Check for geographic redirect
+    if (geoControls.redirectRules[country]) {
+      result.redirect = geoControls.redirectRules[country]
+      result.summary.geoCheck = 'redirect'
+      result.summary.finalDecision = 'redirect'
+    }
+  }
+  
+  // Check time-based controls
+  if (timeControls.enabled) {
+    const visitorTime = new Date(timestamp || Date.now())
+    const timeResult = checkTimeAccess(timeControls, visitorTime)
+    
+    if (!timeResult.allowed) {
+      result.allowed = false
+      result.reason = timeResult.reason
+      result.summary.timeCheck = 'blocked'
+      result.summary.finalDecision = 'block'
+      return result
+    }
+  }
+  
+  return result
+}
+
+// Check time-based access
+function checkTimeAccess(timeControls, visitorTime) {
+  // Convert to domain's timezone
+  const domainTime = new Date(visitorTime.toLocaleString('en-US', { timeZone: timeControls.timezone }))
+  const dayOfWeek = domainTime.toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase()
+  const hour = domainTime.getHours()
+  const dateString = domainTime.toISOString().split('T')[0]
+  
+  // Check holiday blocks
+  for (const holiday of timeControls.holidayBlocks) {
+    if (holiday.date === dateString) {
+      return {
+        allowed: false,
+        reason: `Access blocked on holiday: ${holiday.date}`
+      }
+    }
+  }
+  
+  // Check custom time rules
+  for (const rule of timeControls.rules) {
+    const dayMatches = rule.days.includes(dayOfWeek) || rule.days.includes('all')
+    const hourInRange = hour >= rule.hours[0] && hour <= rule.hours[1]
+    
+    if (dayMatches && hourInRange && rule.action === 'block') {
+      return {
+        allowed: false,
+        reason: `Access blocked during ${rule.days.join(',')} ${rule.hours[0]}:00-${rule.hours[1]}:00`
+      }
+    }
+  }
+  
+  // Check business hours if enabled
+  if (timeControls.businessHours && timeControls.businessHours.enabled) {
+    const bh = timeControls.businessHours
+    const dayInBusinessDays = bh.days.includes(dayOfWeek)
+    const hourInBusinessHours = hour >= bh.start && hour <= bh.end
+    
+    if (bh.blockOutsideHours && (!dayInBusinessDays || !hourInBusinessHours)) {
+      return {
+        allowed: false,
+        reason: `Access only allowed during business hours: ${bh.days.join(',')} ${bh.start}:00-${bh.end}:00`
+      }
+    }
+  }
+  
+  return { allowed: true, reason: null }
 }
 
 // Get or create domain data manager
@@ -2090,6 +3585,356 @@ app.post('/api/traffic/log', async (c) => {
   })
 })
 
+// ====================================================================
+// PHASE 2: GEOGRAPHIC & TIME-BASED ACCESS CONTROLS API ENDPOINTS
+// ====================================================================
+
+// Get domain geographic controls
+app.get('/api/domains/:id/geo-controls', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const domain = domains.get(id)
+  
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const geoControls = dataManager.data.geoControls
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    geoControls,
+    availableCountries: AVAILABLE_COUNTRIES
+  })
+})
+
+// Update domain geographic controls
+app.post('/api/domains/:id/geo-controls', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const updates = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    // Handle complex operations for country lists
+    if (updates.allowedCountries) {
+      if (updates.allowedCountries.action === 'add') {
+        if (!dataManager.data.geoControls.allowedCountries.includes(updates.allowedCountries.country)) {
+          dataManager.data.geoControls.allowedCountries.push(updates.allowedCountries.country)
+        }
+      } else if (updates.allowedCountries.action === 'remove') {
+        const index = dataManager.data.geoControls.allowedCountries.indexOf(updates.allowedCountries.country)
+        if (index > -1) {
+          dataManager.data.geoControls.allowedCountries.splice(index, 1)
+        }
+      }
+      delete updates.allowedCountries
+    }
+    
+    if (updates.blockedCountries) {
+      if (updates.blockedCountries.action === 'add') {
+        if (!dataManager.data.geoControls.blockedCountries.includes(updates.blockedCountries.country)) {
+          dataManager.data.geoControls.blockedCountries.push(updates.blockedCountries.country)
+        }
+      } else if (updates.blockedCountries.action === 'remove') {
+        const index = dataManager.data.geoControls.blockedCountries.indexOf(updates.blockedCountries.country)
+        if (index > -1) {
+          dataManager.data.geoControls.blockedCountries.splice(index, 1)
+        }
+      }
+      delete updates.blockedCountries
+    }
+    
+    if (updates.redirectRules) {
+      if (updates.redirectRules.action === 'add') {
+        dataManager.data.geoControls.redirectRules[updates.redirectRules.country] = updates.redirectRules.url
+      } else if (updates.redirectRules.action === 'remove') {
+        delete dataManager.data.geoControls.redirectRules[updates.redirectRules.country]
+      }
+      delete updates.redirectRules
+    }
+    
+    // Update remaining simple properties
+    Object.assign(dataManager.data.geoControls, updates)
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Coğrafi kontroller güncellendi',
+      geoControls: dataManager.data.geoControls
+    })
+  } catch (error) {
+    console.error('Geo controls update error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Coğrafi kontroller güncellenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Get domain time controls
+app.get('/api/domains/:id/time-controls', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const domain = domains.get(id)
+  
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const timeControls = dataManager.data.timeControls
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    timeControls,
+    availableTimezones: AVAILABLE_TIMEZONES
+  })
+})
+
+// Update domain time controls
+app.post('/api/domains/:id/time-controls', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const updates = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    // Handle complex operations for rules and holiday blocks
+    if (updates.rules) {
+      if (updates.rules.action === 'add') {
+        if (!dataManager.data.timeControls.rules) {
+          dataManager.data.timeControls.rules = []
+        }
+        dataManager.data.timeControls.rules.push(updates.rules.rule)
+      } else if (updates.rules.action === 'remove') {
+        if (dataManager.data.timeControls.rules && updates.rules.index >= 0) {
+          dataManager.data.timeControls.rules.splice(updates.rules.index, 1)
+        }
+      }
+      // Remove the rules operation from updates to avoid double processing
+      delete updates.rules
+    }
+    
+    if (updates.holidayBlocks) {
+      if (updates.holidayBlocks.action === 'add') {
+        if (!dataManager.data.timeControls.holidayBlocks) {
+          dataManager.data.timeControls.holidayBlocks = []
+        }
+        dataManager.data.timeControls.holidayBlocks.push(updates.holidayBlocks.holiday)
+      } else if (updates.holidayBlocks.action === 'remove') {
+        if (dataManager.data.timeControls.holidayBlocks && updates.holidayBlocks.index >= 0) {
+          dataManager.data.timeControls.holidayBlocks.splice(updates.holidayBlocks.index, 1)
+        }
+      }
+      // Remove the holidayBlocks operation from updates to avoid double processing
+      delete updates.holidayBlocks
+    }
+    
+    // Update remaining simple properties
+    Object.assign(dataManager.data.timeControls, updates)
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Zaman kontrolleri güncellendi',
+      timeControls: dataManager.data.timeControls
+    })
+  } catch (error) {
+    console.error('Time controls update error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Zaman kontrolleri güncellenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Check geographic and time access for visitor
+app.post('/api/domains/:id/check-access', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const { ip, country, userAgent, timestamp } = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const accessResult = checkDomainAccess(dataManager, { ip, country, userAgent, timestamp })
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    accessResult
+  })
+})
+
+// Enhanced traffic logging with geographic, time, and campaign tracking + rate limiting
+app.post('/api/traffic/log-enhanced', async (c) => {
+  const { 
+    domain, 
+    userType,
+    backendUsed,
+    userAgent,
+    referrer,
+    ip,
+    country = 'Unknown',
+    timestamp,
+    sessionId,
+    // Phase 3: Campaign tracking parameters
+    utmSource,
+    utmMedium,
+    utmCampaign,
+    utmContent,
+    utmTerm,
+    customParams = {}
+  } = await c.req.json()
+  
+  const domainObj = Array.from(domains.values()).find(d => d.name === domain)
+  if (!domainObj) {
+    return c.json({ success: false, message: 'Domain not found' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain)
+  
+  // Phase 3: Rate limiting check
+  const rateLimitResult = dataManager.checkRateLimit(ip, userAgent)
+  if (!rateLimitResult.allowed) {
+    return c.json({ 
+      success: true, 
+      action: 'rate_limited',
+      reason: rateLimitResult.reason,
+      retryAfter: rateLimitResult.retryAfter 
+    })
+  }
+  
+  // Phase 5: Security rules evaluation
+  const visitorData = { ip, country, userAgent, referrer, sessionId, timestamp: timestamp || Date.now() }
+  const securityResult = dataManager.evaluateSecurityRules(visitorData)
+  
+  if (!securityResult.allowed) {
+    dataManager.logSecurityEvent({
+      type: 'security_rule_triggered',
+      visitorData,
+      triggeredRules: securityResult.triggeredRules,
+      timestamp: new Date().toISOString()
+    })
+    
+    return c.json({ 
+      success: true, 
+      action: 'blocked',
+      reason: securityResult.reason,
+      triggeredRules: securityResult.triggeredRules 
+    })
+  }
+  
+  // Phase 5: Behavior analysis
+  const behaviorAnalysis = dataManager.analyzeBehavior(visitorData)
+  if (behaviorAnalysis.suspicious && behaviorAnalysis.score >= 80) {
+    dataManager.logSecurityEvent({
+      type: 'suspicious_behavior',
+      visitorData,
+      behaviorScore: behaviorAnalysis.score,
+      reasons: behaviorAnalysis.reasons,
+      timestamp: new Date().toISOString()
+    })
+    
+    // High risk behavior - block or flag
+    if (behaviorAnalysis.riskLevel === 'high') {
+      return c.json({ 
+        success: true, 
+        action: 'blocked',
+        reason: 'Suspicious behavior detected',
+        behaviorAnalysis 
+      })
+    }
+  }
+  
+  // Check all access controls
+  const ipStatus = dataManager.checkIPStatus(ip)
+  const accessCheck = checkDomainAccess(dataManager, { ip, country, userAgent, timestamp })
+  
+  // Determine final action based on all checks
+  let finalAction = backendUsed
+  let blockReason = null
+  
+  if (ipStatus.status === 'blacklisted') {
+    finalAction = 'blocked'
+    blockReason = 'IP blacklisted'
+  } else if (!accessCheck.allowed) {
+    finalAction = 'blocked'
+    blockReason = accessCheck.reason
+  } else if (ipStatus.status === 'whitelisted') {
+    finalAction = 'clean'
+  }
+  
+  // Apply geographic redirect if configured
+  if (accessCheck.redirect) {
+    finalAction = 'redirect'
+  }
+  
+  // Phase 3: Campaign tracking (if enabled and valid UTM parameters)
+  if (dataManager.data.campaigns.enabled && (utmSource || utmMedium || utmCampaign)) {
+    dataManager.trackCampaignClick({
+      utmSource,
+      utmMedium,
+      utmCampaign,
+      utmContent,
+      utmTerm,
+      referrer,
+      ip,
+      country,
+      timestamp: timestamp || Date.now(),
+      customParams
+    })
+  }
+  
+  // Log comprehensive visitor data
+  dataManager.logVisitor({
+    ip,
+    userAgent,
+    referer: referrer,
+    isBot: userType === 'bot',
+    country,
+    action: finalAction,
+    sessionId,
+    timestamp: timestamp || new Date().toISOString(),
+    blockReason,
+    accessCheck: accessCheck.summary
+  })
+  
+  // Update legacy domain statistics
+  domainObj.totalRequests = dataManager.data.analytics.totalRequests
+  domainObj.traffic = dataManager.data.analytics.totalRequests
+  domainObj.humanRequests = dataManager.data.analytics.humanRequests
+  domainObj.botRequests = dataManager.data.analytics.botRequests
+  domainObj.blocked = dataManager.data.analytics.blocked
+  domainObj.lastTrafficUpdate = new Date().toISOString()
+  
+  domains.set(domainObj.id, domainObj)
+  
+  return c.json({ 
+    success: true, 
+    action: finalAction,
+    ipStatus: ipStatus.status,
+    accessCheck: accessCheck.summary,
+    redirect: accessCheck.redirect || null,
+    blockReason,
+    analytics: dataManager.getAnalyticsSummary().overview
+  })
+})
+
 // Real-time domain statistics API
 app.get('/api/domains/:id/stats', requireAuth, (c) => {
   const id = c.req.param('id')
@@ -2113,6 +3958,736 @@ app.get('/api/domains/:id/stats', requireAuth, (c) => {
   }
   
   return c.json({ success: true, stats })
+})
+
+// =============================================================================
+// PHASE 3: CAMPAIGN TRACKING & RATE LIMITING API Routes
+// =============================================================================
+
+// Get domain campaign analytics
+app.get('/api/domains/:id/campaigns', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const domain = domains.get(id)
+  
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const campaignAnalytics = dataManager.getCampaignAnalytics()
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    ...campaignAnalytics
+  })
+})
+
+// Update domain campaign settings
+app.post('/api/domains/:id/campaigns', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const updates = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    // Update campaign settings
+    if (updates.enabled !== undefined) {
+      dataManager.data.campaigns.enabled = updates.enabled
+    }
+    if (updates.utmTracking !== undefined) {
+      dataManager.data.campaigns.utmTracking = updates.utmTracking
+    }
+    if (updates.validUtmSources) {
+      dataManager.data.campaigns.validUtmSources = updates.validUtmSources
+    }
+    if (updates.customParameters) {
+      dataManager.data.campaigns.customParameters = updates.customParameters
+    }
+    
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Campaign settings updated',
+      campaigns: dataManager.data.campaigns
+    })
+  } catch (error) {
+    console.error('Campaign update error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Campaign settings güncellenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Get domain rate limiting status
+app.get('/api/domains/:id/rate-limiting', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const domain = domains.get(id)
+  
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const rateLimitingStatus = dataManager.getRateLimitingStatus()
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    ...rateLimitingStatus
+  })
+})
+
+// Update domain rate limiting settings
+app.post('/api/domains/:id/rate-limiting', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const updates = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    // Update rate limiting settings
+    if (updates.enabled !== undefined) {
+      dataManager.data.rateLimiting.enabled = updates.enabled
+    }
+    if (updates.rules) {
+      if (updates.rules.perIP) {
+        Object.assign(dataManager.data.rateLimiting.rules.perIP, updates.rules.perIP)
+      }
+      if (updates.rules.perSession) {
+        Object.assign(dataManager.data.rateLimiting.rules.perSession, updates.rules.perSession)
+      }
+      if (updates.rules.burst) {
+        Object.assign(dataManager.data.rateLimiting.rules.burst, updates.rules.burst)
+      }
+    }
+    if (updates.botLimiting) {
+      if (updates.botLimiting.perIP) {
+        Object.assign(dataManager.data.rateLimiting.botLimiting.perIP, updates.botLimiting.perIP)
+      }
+      if (updates.botLimiting.burst) {
+        Object.assign(dataManager.data.rateLimiting.botLimiting.burst, updates.botLimiting.burst)
+      }
+    }
+    
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Rate limiting settings updated',
+      rateLimiting: dataManager.data.rateLimiting
+    })
+  } catch (error) {
+    console.error('Rate limiting update error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Rate limiting ayarları güncellenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Get campaign click details
+app.get('/api/domains/:id/campaign-clicks', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const domain = domains.get(id)
+  
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const recentClicks = dataManager.data.campaigns.recentClicks || []
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    clicks: recentClicks.slice(0, 100), // Last 100 clicks
+    total: recentClicks.length
+  })
+})
+
+// =============================================================================
+// PHASE 4: VIDEO DELIVERY SYSTEM API Routes
+// =============================================================================
+
+// Get domain video analytics
+app.get('/api/domains/:id/videos', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const domain = domains.get(id)
+  
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const videoAnalytics = dataManager.getVideoAnalytics()
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    ...videoAnalytics
+  })
+})
+
+// Update domain video system settings
+app.post('/api/domains/:id/videos/settings', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const updates = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    // Update video system settings
+    if (updates.enabled !== undefined) {
+      dataManager.data.videoSystem.enabled = updates.enabled
+    }
+    if (updates.storage) {
+      Object.assign(dataManager.data.videoSystem.storage, updates.storage)
+    }
+    if (updates.viewTracking) {
+      Object.assign(dataManager.data.videoSystem.viewTracking, updates.viewTracking)
+    }
+    
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Video system settings updated',
+      videoSystem: dataManager.data.videoSystem
+    })
+  } catch (error) {
+    console.error('Video system update error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Video system ayarları güncellenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Add or update video
+app.post('/api/domains/:id/videos/add', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const videoData = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    // Validate required fields
+    if (!videoData.id || !videoData.title || !videoData.url) {
+      return c.json({ 
+        success: false, 
+        message: 'Video ID, title, and URL are required' 
+      }, 400)
+    }
+    
+    const video = dataManager.addVideo(videoData)
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Video added successfully',
+      video
+    })
+  } catch (error) {
+    console.error('Add video error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Video eklenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Remove video
+app.delete('/api/domains/:id/videos/:videoId', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const videoId = c.req.param('videoId')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    const removed = dataManager.removeVideo(videoId)
+    if (removed) {
+      await dataManager.save()
+      return c.json({
+        success: true,
+        message: 'Video removed successfully'
+      })
+    } else {
+      return c.json({ 
+        success: false, 
+        message: 'Video not found' 
+      }, 404)
+    }
+  } catch (error) {
+    console.error('Remove video error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Video silinirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Get video access URL with security token
+app.post('/api/domains/:id/videos/:videoId/access', async (c) => {
+  const id = c.req.param('id')
+  const videoId = c.req.param('videoId')
+  const { ip, country, userAgent, sessionId } = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain not found' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    const visitorInfo = { 
+      ip, 
+      country, 
+      userAgent, 
+      sessionId,
+      timestamp: Date.now(),
+      isBot: dataManager.detectBot(userAgent)
+    }
+    
+    const videoAccess = dataManager.getVideoAccessUrl(videoId, visitorInfo)
+    
+    if (!videoAccess) {
+      return c.json({ 
+        success: false, 
+        message: 'Video access denied or video not found' 
+      }, 403)
+    }
+    
+    return c.json({
+      success: true,
+      ...videoAccess
+    })
+  } catch (error) {
+    console.error('Video access error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Video access request failed: ' + error.message 
+    }, 500)
+  }
+})
+
+// Track video view
+app.post('/api/domains/:id/videos/:videoId/view', async (c) => {
+  const id = c.req.param('id')
+  const videoId = c.req.param('videoId')
+  const viewData = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain not found' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    const tracked = dataManager.trackVideoView({
+      videoId,
+      ...viewData,
+      isBot: dataManager.detectBot(viewData.userAgent)
+    })
+    
+    if (tracked) {
+      await dataManager.save()
+      return c.json({
+        success: true,
+        message: 'Video view tracked'
+      })
+    } else {
+      return c.json({ 
+        success: false, 
+        message: 'Video tracking failed' 
+      }, 400)
+    }
+  } catch (error) {
+    console.error('Video view tracking error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Video view tracking failed: ' + error.message 
+    }, 500)
+  }
+})
+
+// Validate video access token and serve video (public endpoint)
+app.get('/api/video/:token', async (c) => {
+  const token = c.req.param('token')
+  const clientIP = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '127.0.0.1'
+  
+  try {
+    // Find domain that contains this video token
+    let targetDomain = null
+    let tokenData = null
+    
+    for (const domain of domains.values()) {
+      const dataManager = getDomainDataManager(domain.name)
+      const validated = dataManager.validateVideoAccessToken(token, clientIP)
+      if (validated) {
+        targetDomain = domain
+        tokenData = validated
+        break
+      }
+    }
+    
+    if (!targetDomain || !tokenData) {
+      return c.json({ success: false, message: 'Invalid or expired token' }, 403)
+    }
+    
+    const dataManager = getDomainDataManager(targetDomain.name)
+    const video = dataManager.getVideo(tokenData.videoId)
+    
+    if (!video || !video.isActive) {
+      return c.json({ success: false, message: 'Video not found or inactive' }, 404)
+    }
+    
+    // In a real implementation, you would stream the video file here
+    // For now, we return the video metadata and URL
+    return c.json({
+      success: true,
+      video: {
+        id: video.id,
+        title: video.title,
+        url: video.url,
+        duration: video.duration,
+        format: video.format,
+        quality: video.quality,
+        thumbnailUrl: video.thumbnailUrl
+      },
+      message: 'Video access granted'
+    })
+  } catch (error) {
+    console.error('Video token validation error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Token validation failed: ' + error.message 
+    }, 500)
+  }
+})
+
+// =============================================================================
+// PHASE 5: ADVANCED SECURITY RULES API Routes
+// =============================================================================
+
+// Get domain security analytics
+app.get('/api/domains/:id/security', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const domain = domains.get(id)
+  
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const securityAnalytics = dataManager.getSecurityAnalytics()
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    ...securityAnalytics
+  })
+})
+
+// Update domain security system settings
+app.post('/api/domains/:id/security/settings', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const updates = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    // Update security system settings
+    if (updates.enabled !== undefined) {
+      dataManager.data.securityRules.enabled = updates.enabled
+    }
+    if (updates.behaviorAnalysis !== undefined) {
+      Object.assign(dataManager.data.securityRules.behaviorAnalysis, updates.behaviorAnalysis)
+    }
+    
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Security settings updated',
+      securityRules: dataManager.data.securityRules
+    })
+  } catch (error) {
+    console.error('Security system update error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Security system ayarları güncellenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Add security rule
+app.post('/api/domains/:id/security/rules', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const ruleData = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    // Validate rule data
+    if (!ruleData.name || !ruleData.condition || !ruleData.action) {
+      return c.json({ 
+        success: false, 
+        message: 'Rule name, condition, and action are required' 
+      }, 400)
+    }
+    
+    const rule = dataManager.addSecurityRule(ruleData)
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Security rule added successfully',
+      rule
+    })
+  } catch (error) {
+    console.error('Add security rule error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Security rule eklenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Update security rule
+app.put('/api/domains/:id/security/rules/:ruleId', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const ruleId = c.req.param('ruleId')
+  const updates = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    const rule = dataManager.updateSecurityRule(ruleId, updates)
+    if (rule) {
+      await dataManager.save()
+      return c.json({
+        success: true,
+        message: 'Security rule updated successfully',
+        rule
+      })
+    } else {
+      return c.json({ 
+        success: false, 
+        message: 'Security rule not found' 
+      }, 404)
+    }
+  } catch (error) {
+    console.error('Update security rule error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Security rule güncellenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Delete security rule
+app.delete('/api/domains/:id/security/rules/:ruleId', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const ruleId = c.req.param('ruleId')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    const removed = dataManager.removeSecurityRule(ruleId)
+    if (removed) {
+      await dataManager.save()
+      return c.json({
+        success: true,
+        message: 'Security rule removed successfully'
+      })
+    } else {
+      return c.json({ 
+        success: false, 
+        message: 'Security rule not found' 
+      }, 404)
+    }
+  } catch (error) {
+    console.error('Remove security rule error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Security rule silinirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Add honeypot trap
+app.post('/api/domains/:id/security/honeypots', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const honeypotData = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    // Validate honeypot data
+    if (!honeypotData.url) {
+      return c.json({ 
+        success: false, 
+        message: 'Honeypot URL is required' 
+      }, 400)
+    }
+    
+    const honeypot = dataManager.addHoneypot(honeypotData)
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Honeypot trap added successfully',
+      honeypot
+    })
+  } catch (error) {
+    console.error('Add honeypot error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Honeypot eklenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Check honeypot (public endpoint for actual honeypot URLs)
+app.get('/honeypot/:path', async (c) => {
+  const path = c.req.param('path')
+  const clientIP = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '127.0.0.1'
+  const userAgent = c.req.header('user-agent') || ''
+  const referrer = c.req.header('referer') || ''
+  
+  // Find which domain owns this honeypot
+  let targetDomain = null
+  let honeypotResult = null
+  
+  for (const domain of domains.values()) {
+    const dataManager = getDomainDataManager(domain.name)
+    const result = dataManager.checkHoneypot(`/honeypot/${path}`, {
+      ip: clientIP,
+      userAgent,
+      referrer,
+      timestamp: Date.now()
+    })
+    
+    if (result.isHoneypot) {
+      targetDomain = domain
+      honeypotResult = result
+      break
+    }
+  }
+  
+  if (honeypotResult?.isHoneypot) {
+    // Return a fake response to fool the bot
+    return c.html(`
+      <!DOCTYPE html>
+      <html>
+      <head><title>Secret Admin Panel</title></head>
+      <body>
+        <h1>Administrative Interface</h1>
+        <p>Please enter your credentials...</p>
+        <!-- This is a honeypot - accessing this triggers security measures -->
+      </body>
+      </html>
+    `)
+  }
+  
+  return c.notFound()
+})
+
+// Analyze visitor behavior (public endpoint)
+app.post('/api/analyze-behavior', async (c) => {
+  const { domain, ip, userAgent, sessionId, timestamp } = await c.req.json()
+  
+  const domainObj = Array.from(domains.values()).find(d => d.name === domain)
+  if (!domainObj) {
+    return c.json({ success: false, message: 'Domain not found' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain)
+  
+  try {
+    const behaviorAnalysis = dataManager.analyzeBehavior({
+      ip,
+      userAgent,
+      sessionId,
+      timestamp: timestamp || Date.now()
+    })
+    
+    if (behaviorAnalysis.suspicious) {
+      dataManager.logSecurityEvent({
+        type: 'behavior_analysis',
+        visitorData: { ip, userAgent, sessionId },
+        behaviorScore: behaviorAnalysis.score,
+        reasons: behaviorAnalysis.reasons,
+        timestamp: new Date().toISOString()
+      })
+    }
+    
+    return c.json({
+      success: true,
+      analysis: behaviorAnalysis
+    })
+  } catch (error) {
+    console.error('Behavior analysis error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Behavior analysis failed: ' + error.message 
+    }, 500)
+  }
 })
 
 // =============================================================================
@@ -2897,6 +5472,10 @@ app.get('/', (c) => {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Traffic Management Platform</title>
+        <script>
+          // Suppress Tailwind production warning
+          window.process = { env: { NODE_ENV: 'development' } };
+        </script>
         <script src="https://cdn.tailwindcss.com"></script>
         <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
     </head>
@@ -2970,6 +5549,598 @@ app.get('/', (c) => {
   `)
 })
 
+// =============================================================================
+// PHASE 6: HOOK SYSTEM & INTEGRATIONS API ENDPOINTS
+// =============================================================================
+
+// Get domain integrations overview
+app.get('/api/domains/:id/integrations', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const analytics = dataManager.getIntegrationAnalytics()
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    ...analytics,
+    webhooks: dataManager.data.integrations?.webhooks || [],
+    customScripts: dataManager.data.integrations?.customScripts || [],
+    apiConnections: dataManager.data.integrations?.apiConnections || []
+  })
+})
+
+// Webhook Management API Endpoints
+
+// Get domain webhooks
+app.get('/api/domains/:id/integrations/webhooks', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const webhooks = dataManager.data.integrations?.webhooks || []
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    webhooks
+  })
+})
+
+// Add webhook
+app.post('/api/domains/:id/integrations/webhooks', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const webhookData = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    // Validate webhook data
+    if (!webhookData.name || !webhookData.url || !webhookData.events) {
+      return c.json({ 
+        success: false, 
+        message: 'Webhook name, URL, and events are required' 
+      }, 400)
+    }
+    
+    const webhook = dataManager.addWebhook(webhookData)
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Webhook başarıyla eklendi',
+      webhook
+    })
+  } catch (error) {
+    console.error('Webhook creation error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Webhook oluşturulurken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Update webhook
+app.put('/api/domains/:id/integrations/webhooks/:webhookId', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const webhookId = c.req.param('webhookId')
+  const updateData = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const webhooks = dataManager.data.integrations?.webhooks || []
+  const webhook = webhooks.find(w => w.id === webhookId)
+  
+  if (!webhook) {
+    return c.json({ success: false, message: 'Webhook bulunamadı' }, 404)
+  }
+  
+  try {
+    // Update webhook properties
+    Object.keys(updateData).forEach(key => {
+      if (key !== 'id' && key !== 'createdAt') {
+        webhook[key] = updateData[key]
+      }
+    })
+    
+    webhook.updatedAt = new Date().toISOString()
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Webhook başarıyla güncellendi',
+      webhook
+    })
+  } catch (error) {
+    console.error('Webhook update error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Webhook güncellenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Delete webhook
+app.delete('/api/domains/:id/integrations/webhooks/:webhookId', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const webhookId = c.req.param('webhookId')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  if (!dataManager.data.integrations?.webhooks) {
+    return c.json({ success: false, message: 'Webhook bulunamadı' }, 404)
+  }
+  
+  const initialLength = dataManager.data.integrations.webhooks.length
+  dataManager.data.integrations.webhooks = dataManager.data.integrations.webhooks.filter(w => w.id !== webhookId)
+  
+  if (dataManager.data.integrations.webhooks.length === initialLength) {
+    return c.json({ success: false, message: 'Webhook bulunamadı' }, 404)
+  }
+  
+  await dataManager.save()
+  
+  return c.json({
+    success: true,
+    message: 'Webhook başarıyla silindi'
+  })
+})
+
+// Test webhook
+app.post('/api/domains/:id/integrations/webhooks/:webhookId/test', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const webhookId = c.req.param('webhookId')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const webhooks = dataManager.data.integrations?.webhooks || []
+  const webhook = webhooks.find(w => w.id === webhookId)
+  
+  if (!webhook) {
+    return c.json({ success: false, message: 'Webhook bulunamadı' }, 404)
+  }
+  
+  try {
+    const testData = {
+      test: true,
+      timestamp: new Date().toISOString(),
+      message: 'This is a test webhook call'
+    }
+    
+    const result = await dataManager.triggerWebhooks('test_event', testData)
+    
+    return c.json({
+      success: true,
+      message: 'Test webhook başarıyla gönderildi',
+      result
+    })
+  } catch (error) {
+    console.error('Webhook test error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Webhook test edilirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Custom Scripts Management API Endpoints
+
+// Get domain custom scripts
+app.get('/api/domains/:id/integrations/scripts', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const scripts = dataManager.data.integrations?.customScripts || []
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    scripts
+  })
+})
+
+// Add custom script
+app.post('/api/domains/:id/integrations/scripts', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const scriptData = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    // Validate script data
+    if (!scriptData.name || !scriptData.event || !scriptData.code) {
+      return c.json({ 
+        success: false, 
+        message: 'Script name, event, and code are required' 
+      }, 400)
+    }
+    
+    const script = dataManager.addCustomScript(scriptData)
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Custom script başarıyla eklendi',
+      script
+    })
+  } catch (error) {
+    console.error('Custom script creation error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Custom script oluşturulurken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Update custom script
+app.put('/api/domains/:id/integrations/scripts/:scriptId', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const scriptId = c.req.param('scriptId')
+  const updateData = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const scripts = dataManager.data.integrations?.customScripts || []
+  const script = scripts.find(s => s.id === scriptId)
+  
+  if (!script) {
+    return c.json({ success: false, message: 'Custom script bulunamadı' }, 404)
+  }
+  
+  try {
+    // Update script properties
+    Object.keys(updateData).forEach(key => {
+      if (key !== 'id' && key !== 'createdAt') {
+        script[key] = updateData[key]
+      }
+    })
+    
+    script.updatedAt = new Date().toISOString()
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Custom script başarıyla güncellendi',
+      script
+    })
+  } catch (error) {
+    console.error('Custom script update error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Custom script güncellenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Delete custom script
+app.delete('/api/domains/:id/integrations/scripts/:scriptId', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const scriptId = c.req.param('scriptId')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  if (!dataManager.data.integrations?.customScripts) {
+    return c.json({ success: false, message: 'Custom script bulunamadı' }, 404)
+  }
+  
+  const initialLength = dataManager.data.integrations.customScripts.length
+  dataManager.data.integrations.customScripts = dataManager.data.integrations.customScripts.filter(s => s.id !== scriptId)
+  
+  if (dataManager.data.integrations.customScripts.length === initialLength) {
+    return c.json({ success: false, message: 'Custom script bulunamadı' }, 404)
+  }
+  
+  await dataManager.save()
+  
+  return c.json({
+    success: true,
+    message: 'Custom script başarıyla silindi'
+  })
+})
+
+// Execute custom script manually
+app.post('/api/domains/:id/integrations/scripts/:scriptId/execute', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const scriptId = c.req.param('scriptId')
+  const { eventData = {} } = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const scripts = dataManager.data.integrations?.customScripts || []
+  const script = scripts.find(s => s.id === scriptId)
+  
+  if (!script) {
+    return c.json({ success: false, message: 'Custom script bulunamadı' }, 404)
+  }
+  
+  try {
+    const result = await dataManager.executeScript(script, eventData)
+    
+    return c.json({
+      success: true,
+      message: 'Custom script başarıyla çalıştırıldı',
+      result
+    })
+  } catch (error) {
+    console.error('Custom script execution error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Custom script çalıştırılırken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// API Connections Management API Endpoints
+
+// Get domain API connections
+app.get('/api/domains/:id/integrations/apis', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const connections = dataManager.data.integrations?.apiConnections || []
+  
+  // Hide API keys in response
+  const safeConnections = connections.map(conn => ({
+    ...conn,
+    apiKey: conn.apiKey ? '***encrypted***' : null
+  }))
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    connections: safeConnections
+  })
+})
+
+// Add API connection
+app.post('/api/domains/:id/integrations/apis', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const connectionData = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    // Validate connection data
+    if (!connectionData.name || !connectionData.type || !connectionData.baseUrl) {
+      return c.json({ 
+        success: false, 
+        message: 'Connection name, type, and base URL are required' 
+      }, 400)
+    }
+    
+    const connection = dataManager.addApiConnection(connectionData)
+    await dataManager.save()
+    
+    // Hide API key in response
+    const safeConnection = {
+      ...connection,
+      apiKey: connection.apiKey ? '***encrypted***' : null
+    }
+    
+    return c.json({
+      success: true,
+      message: 'API connection başarıyla eklendi',
+      connection: safeConnection
+    })
+  } catch (error) {
+    console.error('API connection creation error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'API connection oluşturulurken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Update API connection
+app.put('/api/domains/:id/integrations/apis/:connectionId', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const connectionId = c.req.param('connectionId')
+  const updateData = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const connections = dataManager.data.integrations?.apiConnections || []
+  const connection = connections.find(c => c.id === connectionId)
+  
+  if (!connection) {
+    return c.json({ success: false, message: 'API connection bulunamadı' }, 404)
+  }
+  
+  try {
+    // Update connection properties
+    Object.keys(updateData).forEach(key => {
+      if (key !== 'id' && key !== 'createdAt') {
+        connection[key] = updateData[key]
+      }
+    })
+    
+    connection.updatedAt = new Date().toISOString()
+    await dataManager.save()
+    
+    // Hide API key in response
+    const safeConnection = {
+      ...connection,
+      apiKey: connection.apiKey ? '***encrypted***' : null
+    }
+    
+    return c.json({
+      success: true,
+      message: 'API connection başarıyla güncellendi',
+      connection: safeConnection
+    })
+  } catch (error) {
+    console.error('API connection update error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'API connection güncellenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Delete API connection
+app.delete('/api/domains/:id/integrations/apis/:connectionId', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const connectionId = c.req.param('connectionId')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  if (!dataManager.data.integrations?.apiConnections) {
+    return c.json({ success: false, message: 'API connection bulunamadı' }, 404)
+  }
+  
+  const initialLength = dataManager.data.integrations.apiConnections.length
+  dataManager.data.integrations.apiConnections = dataManager.data.integrations.apiConnections.filter(c => c.id !== connectionId)
+  
+  if (dataManager.data.integrations.apiConnections.length === initialLength) {
+    return c.json({ success: false, message: 'API connection bulunamadı' }, 404)
+  }
+  
+  await dataManager.save()
+  
+  return c.json({
+    success: true,
+    message: 'API connection başarıyla silindi'
+  })
+})
+
+// Test API connection
+app.post('/api/domains/:id/integrations/apis/:connectionId/test', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const connectionId = c.req.param('connectionId')
+  const { endpoint = '/', method = 'GET', data = null } = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    const result = await dataManager.callApi(connectionId, endpoint, method, data)
+    
+    return c.json({
+      success: true,
+      message: 'API connection testi başarılı',
+      result
+    })
+  } catch (error) {
+    console.error('API connection test error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'API connection test edilirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Event System API Endpoint
+
+// Trigger manual event for testing integrations
+app.post('/api/domains/:id/integrations/trigger-event', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const { eventType, eventData = {} } = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  if (!eventType) {
+    return c.json({ success: false, message: 'Event type gereklidir' }, 400)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    const results = await dataManager.triggerEvent(eventType, {
+      ...eventData,
+      triggeredBy: 'manual',
+      timestamp: new Date().toISOString()
+    })
+    
+    return c.json({
+      success: true,
+      message: 'Event başarıyla tetiklendi',
+      results
+    })
+  } catch (error) {
+    console.error('Event trigger error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Event tetiklenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
 // Dashboard with navigation
 app.get('/dashboard', (c) => {
   return c.html(`
@@ -2979,6 +6150,10 @@ app.get('/dashboard', (c) => {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Traffic Management - Dashboard</title>
+        <script>
+          // Suppress Tailwind production warning
+          window.process = { env: { NODE_ENV: 'development' } };
+        </script>
         <script src="https://cdn.tailwindcss.com"></script>
         <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
     </head>
@@ -4055,6 +7230,13 @@ app.get('/dashboard', (c) => {
                         Kapat
                     </button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Universal Modal for Integrations -->
+        <div id="modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div id="modal-content">
+                <!-- Modal content will be dynamically loaded here -->
             </div>
         </div>
 
