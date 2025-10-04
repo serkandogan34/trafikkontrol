@@ -19,11 +19,347 @@ const ADMIN_USERNAME = 'admin'
 const ADMIN_PASSWORD = 'admin123'
 const sessions = new Map()
 
-// Domain Management System
+// ====================================================================
+// JSON-BASED DATA STORAGE SYSTEM (NO CLOUDFLARE DEPENDENCIES)
+// ====================================================================
+
+// In-memory domain management with JSON persistence simulation
 const domains = new Map()
+
+// Per-domain data structure for comprehensive traffic management
+const domainDataStore = new Map()
 
 // DNS Management System
 const dnsRecords = new Map()
+
+// Data structure for each domain's comprehensive configuration
+class DomainDataManager {
+  constructor(domainName) {
+    this.domainName = domainName
+    this.data = {
+      // Domain basic info
+      id: Date.now().toString(),
+      name: domainName,
+      status: 'active',
+      connected: true,
+      addedAt: new Date().toISOString(),
+      lastChecked: new Date().toISOString(),
+      
+      // IP Management (Phase 1)
+      ipRules: {
+        whitelist: [], // { ip: '192.168.1.1', reason: 'Trusted office', addedAt: ISO, addedBy: 'admin' }
+        blacklist: [], // { ip: '1.2.3.4', reason: 'Spam source', addedAt: ISO, addedBy: 'admin' }
+        graylist: [],  // { ip: '5.6.7.8', reason: 'Suspicious activity', addedAt: ISO, addedBy: 'admin' }
+        ranges: {      // CIDR ranges
+          whitelist: [], // { range: '192.168.0.0/24', reason: 'Company network' }
+          blacklist: [], // { range: '10.0.0.0/8', reason: 'Blocked network' }
+          graylist: []   // { range: '172.16.0.0/12', reason: 'Monitor network' }
+        }
+      },
+      
+      // Visitor Analytics (Phase 1)
+      analytics: {
+        totalRequests: 0,
+        uniqueVisitors: 0,
+        humanRequests: 0,
+        botRequests: 0,
+        blocked: 0,
+        
+        // Content type served counters
+        cleanServed: 0,
+        grayServed: 0,
+        aggressiveServed: 0,
+        
+        // Referrer analytics
+        referrers: {
+          facebook: 0,
+          google: 0,
+          twitter: 0,
+          instagram: 0,
+          direct: 0,
+          other: 0
+        },
+        
+        // Geographic analytics
+        countries: {}, // { 'US': { requests: 100, humans: 80, bots: 20 } }
+        
+        // Time-based analytics
+        hourlyStats: {}, // { '2024-01-01-14': { requests: 50, humans: 40, bots: 10 } }
+        
+        // Recent visitor tracking (last 1000 visitors)
+        recentVisitors: [], // { ip, userAgent, referer, timestamp, isBot, country, action }
+        
+        // Last update timestamp
+        lastUpdate: new Date().toISOString()
+      },
+      
+      // Geographic Controls (Phase 2 - structure ready)
+      geoControls: {
+        enabled: false,
+        allowedCountries: [], // ['US', 'CA', 'GB']
+        blockedCountries: [], // ['CN', 'RU']
+        redirectRules: {},    // { 'US': 'us.example.com', 'EU': 'eu.example.com' }
+        defaultAction: 'allow' // 'allow' | 'block' | 'redirect'
+      },
+      
+      // Time-based Access Controls (Phase 2 - structure ready)
+      timeControls: {
+        enabled: false,
+        timezone: 'UTC',
+        rules: [], // { days: ['mon', 'tue'], hours: [9, 17], action: 'block' }
+        businessHours: { start: 9, end: 17, days: ['mon', 'tue', 'wed', 'thu', 'fri'] },
+        holidayBlocks: [] // { date: '2024-12-25', action: 'block' }
+      },
+      
+      // Campaign Tracking (Phase 3 - structure ready)
+      campaigns: {
+        enabled: false,
+        utmTracking: true,
+        campaigns: {}, // { 'campaign1': { clicks: 100, conversions: 10, sources: {...} } }
+        sources: {},   // { 'facebook': { clicks: 50, campaigns: [...] } }
+        validUtmSources: ['facebook', 'google', 'twitter', 'email'],
+        customParameters: [] // ['custom_param1', 'custom_param2']
+      },
+      
+      // Rate Limiting (Phase 3 - structure ready)
+      rateLimiting: {
+        enabled: true,
+        rules: {
+          perIP: { requests: 60, window: 60 }, // 60 requests per minute
+          perSession: { requests: 300, window: 3600 }, // 300 requests per hour
+          burst: { requests: 10, window: 1 } // Max 10 requests per second
+        },
+        botLimiting: {
+          perIP: { requests: 10, window: 60 }, // 10 requests per minute for bots
+          burst: { requests: 2, window: 1 } // Max 2 requests per second for bots
+        }
+      },
+      
+      // Video Delivery System (Phase 4 - structure ready)
+      videoSystem: {
+        enabled: false,
+        storage: {
+          type: 'local', // 'local' | 'external' | 'cdn'
+          basePath: '/videos/',
+          cdnUrl: '',
+          encryptionEnabled: false
+        },
+        videos: {}, // { 'video1': { title, url, views, uniqueViews, trackingData } }
+        viewTracking: {
+          methods: ['localStorage', 'sessionStorage', 'cookies', 'fingerprint'],
+          preventMultipleViews: true,
+          trackingWindow: 86400 // 24 hours
+        },
+        analytics: {
+          totalViews: 0,
+          uniqueViews: 0,
+          viewsByVideo: {},
+          viewsByCountry: {},
+          viewsByReferrer: {}
+        }
+      },
+      
+      // Advanced Security Rules (Phase 5 - structure ready)
+      securityRules: {
+        enabled: false,
+        customRules: [], // { name, condition, action, priority }
+        honeypots: [],   // { url, triggers, actions }
+        behaviorAnalysis: {
+          enabled: false,
+          suspiciousPatterns: [],
+          actions: {}
+        }
+      },
+      
+      // Hook System (Phase 6 - structure ready)
+      hooks: {
+        enabled: false,
+        webhooks: [], // { event, url, method, headers, retries }
+        events: ['visitor_detected', 'bot_blocked', 'campaign_click', 'video_view'],
+        customScripts: [] // { event, script, enabled }
+      }
+    }
+  }
+  
+  // Simulate JSON file save (in production, this would write to actual files)
+  async save() {
+    // In production: await writeFile(`domains/${this.domainName}/config.json`, JSON.stringify(this.data, null, 2))
+    console.log(`[DataManager] Saving data for ${this.domainName}:`, this.data)
+    return true
+  }
+  
+  // Simulate JSON file load (in production, this would read from actual files)
+  async load() {
+    // In production: this.data = JSON.parse(await readFile(`domains/${this.domainName}/config.json`))
+    console.log(`[DataManager] Loading data for ${this.domainName}`)
+    return this.data
+  }
+  
+  // Add IP to whitelist/blacklist/graylist
+  addIPRule(listType, ip, reason = '', addedBy = 'admin') {
+    if (!['whitelist', 'blacklist', 'graylist'].includes(listType)) return false
+    
+    const rule = {
+      ip: ip.trim(),
+      reason: reason || `Added to ${listType}`,
+      addedAt: new Date().toISOString(),
+      addedBy
+    }
+    
+    // Remove from other lists first
+    const otherLists = ['whitelist', 'blacklist', 'graylist'].filter(l => l !== listType)
+    otherLists.forEach(list => {
+      this.data.ipRules[list] = this.data.ipRules[list].filter(r => r.ip !== ip)
+    })
+    
+    // Add to specified list
+    this.data.ipRules[listType].push(rule)
+    this.save()
+    return true
+  }
+  
+  // Remove IP from all lists
+  removeIPRule(ip) {
+    ['whitelist', 'blacklist', 'graylist'].forEach(list => {
+      this.data.ipRules[list] = this.data.ipRules[list].filter(r => r.ip !== ip)
+    })
+    this.save()
+    return true
+  }
+  
+  // Check IP status
+  checkIPStatus(ip) {
+    const whitelist = this.data.ipRules.whitelist.find(r => r.ip === ip)
+    const blacklist = this.data.ipRules.blacklist.find(r => r.ip === ip)
+    const graylist = this.data.ipRules.graylist.find(r => r.ip === ip)
+    
+    if (whitelist) return { status: 'whitelisted', rule: whitelist }
+    if (blacklist) return { status: 'blacklisted', rule: blacklist }
+    if (graylist) return { status: 'graylisted', rule: graylist }
+    
+    return { status: 'unknown', rule: null }
+  }
+  
+  // Log visitor analytics
+  logVisitor(visitorData) {
+    const { ip, userAgent, referer, isBot, country, action } = visitorData
+    
+    // Update counters
+    this.data.analytics.totalRequests++
+    if (isBot) {
+      this.data.analytics.botRequests++
+    } else {
+      this.data.analytics.humanRequests++
+    }
+    
+    // Update action counters
+    if (action === 'clean') this.data.analytics.cleanServed++
+    else if (action === 'gray') this.data.analytics.grayServed++
+    else if (action === 'aggressive') this.data.analytics.aggressiveServed++
+    else if (action === 'blocked') this.data.analytics.blocked++
+    
+    // Update referrer stats
+    const referrerType = this.analyzeReferrer(referer)
+    this.data.analytics.referrers[referrerType]++
+    
+    // Update country stats
+    if (!this.data.analytics.countries[country]) {
+      this.data.analytics.countries[country] = { requests: 0, humans: 0, bots: 0 }
+    }
+    this.data.analytics.countries[country].requests++
+    if (isBot) {
+      this.data.analytics.countries[country].bots++
+    } else {
+      this.data.analytics.countries[country].humans++
+    }
+    
+    // Update hourly stats
+    const hourKey = new Date().toISOString().substring(0, 13) // YYYY-MM-DDTHH
+    if (!this.data.analytics.hourlyStats[hourKey]) {
+      this.data.analytics.hourlyStats[hourKey] = { requests: 0, humans: 0, bots: 0 }
+    }
+    this.data.analytics.hourlyStats[hourKey].requests++
+    if (isBot) {
+      this.data.analytics.hourlyStats[hourKey].bots++
+    } else {
+      this.data.analytics.hourlyStats[hourKey].humans++
+    }
+    
+    // Add to recent visitors (keep last 1000)
+    const visitor = {
+      ip,
+      userAgent: userAgent?.substring(0, 200) || 'Unknown',
+      referer: referer?.substring(0, 200) || '',
+      timestamp: new Date().toISOString(),
+      isBot,
+      country,
+      action
+    }
+    
+    this.data.analytics.recentVisitors.unshift(visitor)
+    if (this.data.analytics.recentVisitors.length > 1000) {
+      this.data.analytics.recentVisitors = this.data.analytics.recentVisitors.slice(0, 1000)
+    }
+    
+    // Update timestamp
+    this.data.analytics.lastUpdate = new Date().toISOString()
+    
+    // Save data
+    this.save()
+  }
+  
+  // Analyze referrer type
+  analyzeReferrer(referer) {
+    if (!referer || referer === '') return 'direct'
+    
+    const lower = referer.toLowerCase()
+    if (lower.includes('facebook') || lower.includes('fb.')) return 'facebook'
+    if (lower.includes('google')) return 'google'
+    if (lower.includes('twitter') || lower.includes('t.co')) return 'twitter'
+    if (lower.includes('instagram')) return 'instagram'
+    
+    return 'other'
+  }
+  
+  // Get analytics summary
+  getAnalyticsSummary() {
+    const analytics = this.data.analytics
+    
+    return {
+      overview: {
+        totalRequests: analytics.totalRequests,
+        uniqueVisitors: analytics.uniqueVisitors,
+        humanRequests: analytics.humanRequests,
+        botRequests: analytics.botRequests,
+        blocked: analytics.blocked,
+        humanRate: analytics.totalRequests > 0 ? 
+          ((analytics.humanRequests / analytics.totalRequests) * 100).toFixed(1) : '0',
+        botRate: analytics.totalRequests > 0 ? 
+          ((analytics.botRequests / analytics.totalRequests) * 100).toFixed(1) : '0'
+      },
+      content: {
+        cleanServed: analytics.cleanServed,
+        grayServed: analytics.grayServed,
+        aggressiveServed: analytics.aggressiveServed
+      },
+      referrers: analytics.referrers,
+      topCountries: Object.entries(analytics.countries)
+        .sort(([,a], [,b]) => b.requests - a.requests)
+        .slice(0, 10)
+        .map(([country, stats]) => ({ country, ...stats })),
+      recentActivity: analytics.recentVisitors.slice(0, 50),
+      lastUpdate: analytics.lastUpdate
+    }
+  }
+}
+
+// Get or create domain data manager
+function getDomainDataManager(domainName) {
+  if (!domainDataStore.has(domainName)) {
+    domainDataStore.set(domainName, new DomainDataManager(domainName))
+  }
+  return domainDataStore.get(domainName)
+}
 
 // DNS record types and validation
 const DNS_RECORD_TYPES = {
@@ -1424,16 +1760,279 @@ app.get('/api/nginx/download-config', requireAuth, async (c) => {
   }
 })
 
-// Real traffic tracking API (NGINX will call this)
+// ====================================================================
+// PHASE 1: IP MANAGEMENT & VISITOR ANALYTICS API ENDPOINTS
+// ====================================================================
+
+// Get domain IP rules
+app.get('/api/domains/:id/ip-rules', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const domain = domains.get(id)
+  
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const ipRules = dataManager.data.ipRules
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    ipRules,
+    summary: {
+      whitelistCount: ipRules.whitelist.length,
+      blacklistCount: ipRules.blacklist.length,
+      graylistCount: ipRules.graylist.length,
+      rangeRulesCount: Object.values(ipRules.ranges).flat().length
+    }
+  })
+})
+
+// Add IP rule
+app.post('/api/domains/:id/ip-rules', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const { ip, listType, reason } = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  if (!ip || !listType) {
+    return c.json({ success: false, message: 'IP adresi ve liste tipi gerekli' }, 400)
+  }
+  
+  // Validate IP address
+  const ipRegex = /^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$/
+  if (!ipRegex.test(ip)) {
+    return c.json({ success: false, message: 'Geçersiz IP adresi formatı' }, 400)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const success = dataManager.addIPRule(listType, ip, reason)
+  
+  if (success) {
+    return c.json({ 
+      success: true, 
+      message: `IP ${ip} ${listType} listesine eklendi`,
+      ipRules: dataManager.data.ipRules
+    })
+  } else {
+    return c.json({ success: false, message: 'IP kuralı eklenirken hata oluştu' }, 500)
+  }
+})
+
+// Remove IP rule
+app.delete('/api/domains/:id/ip-rules/:ip', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const ip = c.req.param('ip')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const success = dataManager.removeIPRule(ip)
+  
+  if (success) {
+    return c.json({ 
+      success: true, 
+      message: `IP ${ip} tüm listelerden kaldırıldı`,
+      ipRules: dataManager.data.ipRules
+    })
+  } else {
+    return c.json({ success: false, message: 'IP kuralı kaldırılırken hata oluştu' }, 500)
+  }
+})
+
+// Check IP status
+app.get('/api/domains/:id/ip-check/:ip', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const ip = c.req.param('ip')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const result = dataManager.checkIPStatus(ip)
+  
+  return c.json({ success: true, ip, ...result })
+})
+
+// Bulk IP operations
+app.post('/api/domains/:id/ip-bulk', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const { action, ips, listType, reason } = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  if (!ips || !Array.isArray(ips)) {
+    return c.json({ success: false, message: 'IP listesi gerekli' }, 400)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const results = []
+  
+  for (const ip of ips) {
+    try {
+      if (action === 'add') {
+        const success = dataManager.addIPRule(listType, ip, reason)
+        results.push({ ip, success, action: 'added' })
+      } else if (action === 'remove') {
+        const success = dataManager.removeIPRule(ip)
+        results.push({ ip, success, action: 'removed' })
+      }
+    } catch (error) {
+      results.push({ ip, success: false, error: error.message })
+    }
+  }
+  
+  return c.json({ 
+    success: true, 
+    message: `Toplu ${action} işlemi tamamlandı`,
+    results,
+    ipRules: dataManager.data.ipRules
+  })
+})
+
+// Get visitor analytics
+app.get('/api/domains/:id/analytics', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const domain = domains.get(id)
+  
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const analytics = dataManager.getAnalyticsSummary()
+  
+  return c.json({ 
+    success: true,
+    domain: domain.name,
+    analytics
+  })
+})
+
+// Get detailed analytics with filters
+app.get('/api/domains/:id/analytics/detailed', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const timeRange = c.req.query('timeRange') || '24h' // 1h, 24h, 7d, 30d
+  const country = c.req.query('country')
+  const referrer = c.req.query('referrer')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const analytics = dataManager.data.analytics
+  
+  // Filter recent visitors based on query parameters
+  let filteredVisitors = analytics.recentVisitors
+  
+  // Time range filter
+  const now = new Date()
+  const timeRanges = {
+    '1h': 1 * 60 * 60 * 1000,
+    '24h': 24 * 60 * 60 * 1000,
+    '7d': 7 * 24 * 60 * 60 * 1000,
+    '30d': 30 * 24 * 60 * 60 * 1000
+  }
+  
+  if (timeRanges[timeRange]) {
+    const cutoff = new Date(now.getTime() - timeRanges[timeRange])
+    filteredVisitors = filteredVisitors.filter(v => new Date(v.timestamp) > cutoff)
+  }
+  
+  // Country filter
+  if (country) {
+    filteredVisitors = filteredVisitors.filter(v => v.country === country)
+  }
+  
+  // Referrer filter  
+  if (referrer) {
+    filteredVisitors = filteredVisitors.filter(v => 
+      v.referer && v.referer.toLowerCase().includes(referrer.toLowerCase())
+    )
+  }
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    timeRange,
+    filters: { country, referrer },
+    analytics: {
+      filteredVisitors,
+      summary: {
+        totalFiltered: filteredVisitors.length,
+        humanCount: filteredVisitors.filter(v => !v.isBot).length,
+        botCount: filteredVisitors.filter(v => v.isBot).length,
+        actionBreakdown: {
+          clean: filteredVisitors.filter(v => v.action === 'clean').length,
+          gray: filteredVisitors.filter(v => v.action === 'gray').length,
+          aggressive: filteredVisitors.filter(v => v.action === 'aggressive').length,
+          blocked: filteredVisitors.filter(v => v.action === 'blocked').length
+        }
+      },
+      hourlyBreakdown: analytics.hourlyStats
+    }
+  })
+})
+
+// Real-time visitor feed (for live dashboard updates)
+app.get('/api/domains/:id/visitors/live', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const since = c.req.query('since') // ISO timestamp
+  const limit = parseInt(c.req.query('limit') || '20')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  let recentVisitors = dataManager.data.analytics.recentVisitors
+  
+  // Filter by timestamp if provided
+  if (since) {
+    const sinceDate = new Date(since)
+    recentVisitors = recentVisitors.filter(v => new Date(v.timestamp) > sinceDate)
+  }
+  
+  // Limit results
+  recentVisitors = recentVisitors.slice(0, limit)
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    visitors: recentVisitors,
+    timestamp: new Date().toISOString()
+  })
+})
+
+// Enhanced traffic logging API with comprehensive analytics
 app.post('/api/traffic/log', async (c) => {
   const { 
     domain, 
     userType, // 'bot' | 'human'
-    backendUsed, // 'clean' | 'gray' | 'aggressive'
+    backendUsed, // 'clean' | 'gray' | 'aggressive' | 'blocked'
     userAgent,
     referrer,
     ip,
-    blocked = false
+    country = 'Unknown',
+    blocked = false,
+    // New analytics fields
+    sessionId,
+    timestamp
   } = await c.req.json()
   
   const domainObj = Array.from(domains.values()).find(d => d.name === domain)
@@ -1441,32 +2040,54 @@ app.post('/api/traffic/log', async (c) => {
     return c.json({ success: false, message: 'Domain not found' }, 404)
   }
   
-  // Update real statistics
-  domainObj.totalRequests += 1
-  domainObj.traffic += 1
+  // Get domain data manager
+  const dataManager = getDomainDataManager(domain)
   
-  if (blocked) {
-    domainObj.blocked += 1
+  // Check IP status for enhanced security
+  const ipStatus = dataManager.checkIPStatus(ip)
+  
+  // Determine final action based on IP status and backend decision
+  let finalAction = backendUsed
+  if (ipStatus.status === 'blacklisted') {
+    finalAction = 'blocked'
+  } else if (ipStatus.status === 'whitelisted') {
+    // Whitelisted IPs get clean content unless explicitly overridden
+    if (backendUsed !== 'blocked') {
+      finalAction = 'clean'
+    }
   }
   
-  if (userType === 'bot') {
-    domainObj.botRequests += 1
-  } else {
-    domainObj.humanRequests += 1
-  }
+  // Log comprehensive visitor data
+  dataManager.logVisitor({
+    ip,
+    userAgent,
+    referer: referrer,
+    isBot: userType === 'bot',
+    country,
+    action: finalAction,
+    sessionId,
+    timestamp: timestamp || new Date().toISOString()
+  })
   
-  if (backendUsed === 'clean') {
-    domainObj.cleanServed += 1
-  } else if (backendUsed === 'gray') {
-    domainObj.grayServed += 1
-  } else if (backendUsed === 'aggressive') {
-    domainObj.aggressiveServed += 1
-  }
-  
+  // Update legacy domain statistics for backward compatibility
+  domainObj.totalRequests = dataManager.data.analytics.totalRequests
+  domainObj.traffic = dataManager.data.analytics.totalRequests
+  domainObj.humanRequests = dataManager.data.analytics.humanRequests
+  domainObj.botRequests = dataManager.data.analytics.botRequests
+  domainObj.blocked = dataManager.data.analytics.blocked
+  domainObj.cleanServed = dataManager.data.analytics.cleanServed
+  domainObj.grayServed = dataManager.data.analytics.grayServed
+  domainObj.aggressiveServed = dataManager.data.analytics.aggressiveServed
   domainObj.lastTrafficUpdate = new Date().toISOString()
+  
   domains.set(domainObj.id, domainObj)
   
-  return c.json({ success: true })
+  return c.json({ 
+    success: true, 
+    action: finalAction,
+    ipStatus: ipStatus.status,
+    analytics: dataManager.getAnalyticsSummary().overview
+  })
 })
 
 // Real-time domain statistics API
@@ -2430,11 +3051,155 @@ app.get('/dashboard', (c) => {
             <!-- Traffic Analysis Section -->
             <div id="section-traffic" class="section hidden">
                 <div class="bg-gray-800 rounded-lg p-6">
-                    <h2 class="text-2xl font-bold mb-6">
-                        <i class="fas fa-chart-line mr-2 text-green-400"></i>
-                        Trafik Analizi
-                    </h2>
-                    <p class="text-gray-400">Trafik analizi modülü yakında eklenecek...</p>
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">
+                            <i class="fas fa-chart-line mr-2 text-green-400"></i>
+                            Traffic Analysis & Visitor Management
+                        </h2>
+                        <div class="flex space-x-3">
+                            <button onclick="loadTrafficData()" 
+                                    class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg font-medium">
+                                <i class="fas fa-sync-alt mr-2"></i>Refresh Data
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Phase 1 Features Overview -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                        <!-- IP Management Overview -->
+                        <div class="bg-gray-700 p-6 rounded-lg border-l-4 border-purple-500">
+                            <h3 class="text-xl font-bold text-purple-300 mb-4 flex items-center">
+                                <i class="fas fa-shield-alt mr-3"></i>
+                                Per-Domain IP Management
+                            </h3>
+                            <p class="text-gray-300 mb-4">
+                                Control access with whitelist, blacklist, and graylist rules. 
+                                Each domain has its own IP security configuration.
+                            </p>
+                            <div class="space-y-2 text-sm text-gray-400 mb-4">
+                                <div class="flex items-center">
+                                    <i class="fas fa-check-circle text-green-400 mr-2"></i>
+                                    <span>Whitelist: Always allow trusted IPs</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-ban text-red-400 mr-2"></i>
+                                    <span>Blacklist: Always block malicious IPs</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-exclamation-triangle text-yellow-400 mr-2"></i>
+                                    <span>Graylist: Monitor suspicious IPs</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-layer-group text-blue-400 mr-2"></i>
+                                    <span>Bulk operations for IP ranges</span>
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500">
+                                Click the purple shield button on any domain to manage its IP rules.
+                            </p>
+                        </div>
+                        
+                        <!-- Analytics Overview -->
+                        <div class="bg-gray-700 p-6 rounded-lg border-l-4 border-green-500">
+                            <h3 class="text-xl font-bold text-green-300 mb-4 flex items-center">
+                                <i class="fas fa-chart-bar mr-3"></i>
+                                Advanced Visitor Analytics
+                            </h3>
+                            <p class="text-gray-300 mb-4">
+                                Real-time visitor tracking with comprehensive analytics. 
+                                Monitor human vs bot traffic, geographic distribution, and content serving patterns.
+                            </p>
+                            <div class="space-y-2 text-sm text-gray-400 mb-4">
+                                <div class="flex items-center">
+                                    <i class="fas fa-users text-blue-400 mr-2"></i>
+                                    <span>Human vs Bot traffic analysis</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-globe text-cyan-400 mr-2"></i>
+                                    <span>Geographic visitor distribution</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-external-link-alt text-orange-400 mr-2"></i>
+                                    <span>Referrer source tracking</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-clock text-pink-400 mr-2"></i>
+                                    <span>Real-time visitor activity feed</span>
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500">
+                                Click the green chart button on any domain to view its analytics dashboard.
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <!-- Implementation Status -->
+                    <div class="bg-gray-700 p-4 rounded-lg mb-6">
+                        <h4 class="text-lg font-semibold text-white mb-4 flex items-center">
+                            <i class="fas fa-tasks text-blue-400 mr-2"></i>
+                            Phase 1 Implementation Status
+                        </h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            <div class="flex items-center space-x-2">
+                                <i class="fas fa-check-circle text-green-400"></i>
+                                <span class="text-gray-300">JSON Data Storage</span>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <i class="fas fa-check-circle text-green-400"></i>
+                                <span class="text-gray-300">Per-Domain IP Rules</span>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <i class="fas fa-check-circle text-green-400"></i>
+                                <span class="text-gray-300">Visitor Analytics</span>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <i class="fas fa-check-circle text-green-400"></i>
+                                <span class="text-gray-300">Real-time Tracking</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Next Phases Preview -->
+                    <div class="bg-gray-700 p-4 rounded-lg">
+                        <h4 class="text-lg font-semibold text-white mb-4 flex items-center">
+                            <i class="fas fa-road text-yellow-400 mr-2"></i>
+                            Upcoming Features (Next Phases)
+                        </h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <!-- Phase 2 -->
+                            <div class="bg-gray-600 p-3 rounded">
+                                <h5 class="font-semibold text-cyan-400 mb-2">Phase 2: Geographic & Time Controls</h5>
+                                <ul class="text-sm text-gray-300 space-y-1">
+                                    <li>• Country-based access control</li>
+                                    <li>• Time-based access rules</li>
+                                    <li>• Business hours restrictions</li>
+                                    <li>• Holiday blocking</li>
+                                </ul>
+                            </div>
+                            
+                            <!-- Phase 3 -->
+                            <div class="bg-gray-600 p-3 rounded">
+                                <h5 class="font-semibold text-orange-400 mb-2">Phase 3: Campaign & Rate Limiting</h5>
+                                <ul class="text-sm text-gray-300 space-y-1">
+                                    <li>• UTM campaign tracking</li>
+                                    <li>• Source attribution</li>
+                                    <li>• Advanced rate limiting</li>
+                                    <li>• Per-IP rate rules</li>
+                                </ul>
+                            </div>
+                            
+                            <!-- Phase 4 -->
+                            <div class="bg-gray-600 p-3 rounded">
+                                <h5 class="font-semibold text-purple-400 mb-2">Phase 4: Video Delivery System</h5>
+                                <ul class="text-sm text-gray-300 space-y-1">
+                                    <li>• Single-view video tracking</li>
+                                    <li>• Multi-storage detection</li>
+                                    <li>• Video analytics</li>
+                                    <li>• Encrypted delivery</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
