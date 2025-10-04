@@ -22,6 +22,491 @@ const sessions = new Map()
 // Domain Management System
 const domains = new Map()
 
+// DNS Management System
+const dnsRecords = new Map()
+
+// DNS record types and validation
+const DNS_RECORD_TYPES = {
+  A: { name: 'A Record', description: 'IPv4 adresi', validation: /^(\d{1,3}\.){3}\d{1,3}$/ },
+  AAAA: { name: 'AAAA Record', description: 'IPv6 adresi', validation: /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$/ },
+  CNAME: { name: 'CNAME Record', description: 'Canonical name', validation: /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
+  MX: { name: 'MX Record', description: 'Mail exchange', validation: /^\d+\s+[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
+  TXT: { name: 'TXT Record', description: 'Text kayıt', validation: /.+/ },
+  NS: { name: 'NS Record', description: 'Name server', validation: /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
+  PTR: { name: 'PTR Record', description: 'Pointer record', validation: /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ }
+}
+
+// Advanced DNS Features Configuration
+const GEODNS_CONFIG = {
+  enabled: true,
+  rules: {
+    'US': { servers: ['us1.domain.com', 'us2.domain.com'], weight: 100 },
+    'EU': { servers: ['eu1.domain.com', 'eu2.domain.com'], weight: 100 },
+    'AS': { servers: ['as1.domain.com', 'as2.domain.com'], weight: 80 },
+    'DEFAULT': { servers: ['global1.domain.com', 'global2.domain.com'], weight: 50 }
+  },
+  fallback: 'global1.domain.com'
+}
+
+const DNS_HEALTH_CONFIG = {
+  enabled: true,
+  checkInterval: 30000, // 30 seconds
+  timeout: 5000, // 5 seconds
+  retries: 3,
+  failoverThreshold: 3,
+  autoRecovery: true,
+  protocols: ['http', 'https', 'ping', 'tcp']
+}
+
+const LOAD_BALANCING_CONFIG = {
+  algorithms: ['round_robin', 'least_connections', 'weighted', 'geographic'],
+  healthCheckPath: '/health',
+  sessionStickiness: true,
+  stickyDuration: 3600 // 1 hour
+}
+
+const BOT_DETECTION_CONFIG = {
+  enabled: true,
+  dnsPatterns: {
+    rapidQueries: { threshold: 100, window: 60 }, // 100 queries per minute
+    suspiciousResolvers: ['8.8.8.8', '1.1.1.1'], // Monitor these
+    tunneling: /[a-f0-9]{32,}/, // Detect long hex strings
+    nonStandardPorts: [53, 853, 5353]
+  },
+  actions: {
+    redirect: true,
+    honeypot: 'honeypot.domain.com',
+    delay: 2000,
+    block: false,
+    log: true
+  }
+}
+
+const DNS_SECURITY_CONFIG = {
+  rateLimiting: {
+    enabled: true,
+    perIP: 100, // queries per minute
+    perDomain: 1000,
+    burst: 20,
+    window: 60
+  },
+  tunneling: {
+    enabled: true,
+    maxQuerySize: 255,
+    maxSubdomainLength: 63,
+    suspiciousPatterns: [
+      /[a-f0-9]{32,}/, // Long hex strings
+      /[A-Za-z0-9+/]{100,}/, // Base64-like patterns
+      /\d{10,}/ // Long number sequences
+    ]
+  },
+  geoBlocking: {
+    enabled: false,
+    blockedCountries: [],
+    allowedCountries: [],
+    action: 'block' // or 'redirect'
+  }
+}
+
+// DNS Cache and Performance
+const dnsCache = new Map()
+const dnsMetrics = new Map()
+const healthStatus = new Map()
+
+// DNS providers configuration
+const DNS_PROVIDERS = {
+  CLOUDFLARE: {
+    name: 'Cloudflare',
+    apiUrl: 'https://api.cloudflare.com/client/v4',
+    authType: 'token',
+    icon: 'cloud',
+    color: 'orange'
+  },
+  GODADDY: {
+    name: 'GoDaddy',
+    apiUrl: 'https://api.godaddy.com/v1',
+    authType: 'key',
+    icon: 'globe',
+    color: 'green'
+  },
+  NAMECHEAP: {
+    name: 'Namecheap',
+    apiUrl: 'https://api.namecheap.com/xml.response',
+    authType: 'key',
+    icon: 'shopping-cart',
+    color: 'blue'
+  },
+  CUSTOM: {
+    name: 'Özel Sunucu',
+    apiUrl: 'custom',
+    authType: 'custom',
+    icon: 'server',
+    color: 'purple'
+  }
+}
+
+// Advanced DNS Utility Functions
+
+// Geographic IP detection (simplified)
+const getCountryFromIP = (ip) => {
+  // In production, use a real GeoIP service like MaxMind or Cloudflare
+  const mockGeoData = {
+    '192.168.': 'US',
+    '10.0.': 'EU', 
+    '172.16.': 'AS',
+    '127.0.': 'DEFAULT'
+  }
+  
+  for (const prefix in mockGeoData) {
+    if (ip.startsWith(prefix)) {
+      return mockGeoData[prefix]
+    }
+  }
+  return 'DEFAULT'
+}
+
+// Health check for DNS targets
+const performHealthCheck = async (target, protocol = 'https') => {
+  try {
+    const start = Date.now()
+    let healthy = false
+    
+    switch (protocol) {
+      case 'http':
+      case 'https':
+        const response = await fetch(`${protocol}://${target}/health`, { 
+          method: 'HEAD',
+          signal: AbortSignal.timeout(DNS_HEALTH_CONFIG.timeout)
+        })
+        healthy = response.ok
+        break
+      
+      case 'ping':
+        // Simplified ping check - in production use proper ICMP
+        healthy = await checkTCPConnection(target, 80)
+        break
+        
+      case 'tcp':
+        healthy = await checkTCPConnection(target, 443)
+        break
+    }
+    
+    const responseTime = Date.now() - start
+    
+    return {
+      healthy,
+      responseTime,
+      timestamp: new Date().toISOString(),
+      protocol,
+      target
+    }
+  } catch (error) {
+    return {
+      healthy: false,
+      responseTime: DNS_HEALTH_CONFIG.timeout,
+      timestamp: new Date().toISOString(),
+      error: error.message,
+      protocol,
+      target
+    }
+  }
+}
+
+// TCP Connection check (simplified)
+const checkTCPConnection = async (host, port) => {
+  try {
+    // In Cloudflare Workers, we can only use fetch for HTTP(S) checks
+    // For production, integrate with external monitoring service
+    const response = await fetch(`https://${host}:${port}`, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(2000)
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Bot detection based on DNS patterns
+const detectBotFromDNSPattern = (request, clientIP) => {
+  const userAgent = request.headers.get('user-agent') || ''
+  const referer = request.headers.get('referer') || ''
+  
+  // Check for bot patterns
+  const botIndicators = {
+    rapidQueries: checkRapidQueries(clientIP),
+    suspiciousUA: /bot|crawler|spider|scraper/i.test(userAgent),
+    noReferer: !referer && !userAgent.includes('Mozilla'),
+    suspiciousResolver: checkDNSResolver(clientIP),
+    tunneling: checkDNSTunneling(request.url)
+  }
+  
+  const score = Object.values(botIndicators).reduce((sum, indicator) => sum + (indicator ? 1 : 0), 0)
+  
+  return {
+    isBot: score >= 2,
+    confidence: (score / 5) * 100,
+    indicators: botIndicators,
+    action: score >= 3 ? 'block' : score >= 2 ? 'redirect' : 'allow'
+  }
+}
+
+// Rate limiting check
+const checkRapidQueries = (clientIP) => {
+  const now = Date.now()
+  const windowStart = now - (BOT_DETECTION_CONFIG.dnsPatterns.rapidQueries.window * 1000)
+  
+  if (!dnsMetrics.has(clientIP)) {
+    dnsMetrics.set(clientIP, [])
+  }
+  
+  const queries = dnsMetrics.get(clientIP)
+  // Remove old queries
+  const recentQueries = queries.filter(timestamp => timestamp > windowStart)
+  
+  // Add current query
+  recentQueries.push(now)
+  dnsMetrics.set(clientIP, recentQueries)
+  
+  return recentQueries.length > BOT_DETECTION_CONFIG.dnsPatterns.rapidQueries.threshold
+}
+
+// DNS resolver check
+const checkDNSResolver = (clientIP) => {
+  // Check if using suspicious DNS resolvers
+  return BOT_DETECTION_CONFIG.dnsPatterns.suspiciousResolvers.includes(clientIP)
+}
+
+// DNS tunneling detection
+const checkDNSTunneling = (url) => {
+  const urlObj = new URL(url)
+  const hostname = urlObj.hostname
+  const subdomains = hostname.split('.')
+  
+  // Check for tunneling patterns
+  for (const subdomain of subdomains) {
+    if (BOT_DETECTION_CONFIG.dnsPatterns.tunneling.test(subdomain)) {
+      return true
+    }
+    if (subdomain.length > 63) { // Max DNS label length
+      return true
+    }
+  }
+  
+  return false
+}
+
+// Geographic DNS resolution
+const resolveGeoDNS = (clientIP, domain) => {
+  if (!GEODNS_CONFIG.enabled) {
+    return GEODNS_CONFIG.fallback
+  }
+  
+  const country = getCountryFromIP(clientIP)
+  const geoRule = GEODNS_CONFIG.rules[country] || GEODNS_CONFIG.rules.DEFAULT
+  
+  // Simple load balancing within geographic region
+  const servers = geoRule.servers
+  const randomIndex = Math.floor(Math.random() * servers.length)
+  
+  return servers[randomIndex]
+}
+
+// DNS load balancing
+const getOptimalServer = (servers, algorithm = 'round_robin') => {
+  switch (algorithm) {
+    case 'round_robin':
+      // Simple round-robin (would need persistent counter in production)
+      return servers[Math.floor(Math.random() * servers.length)]
+    
+    case 'least_connections':
+      // Return server with least active connections
+      return servers.reduce((least, current) => 
+        (current.connections || 0) < (least.connections || 0) ? current : least
+      )
+    
+    case 'weighted':
+      // Weighted selection based on server capacity
+      const totalWeight = servers.reduce((sum, server) => sum + (server.weight || 1), 0)
+      let random = Math.random() * totalWeight
+      
+      for (const server of servers) {
+        random -= (server.weight || 1)
+        if (random <= 0) return server
+      }
+      return servers[0]
+    
+    case 'geographic':
+      // Geographic proximity (would need GeoIP integration)
+      return servers[0] // Simplified
+    
+    default:
+      return servers[0]
+  }
+}
+
+// DNS cache management
+const cacheDNSRecord = (domain, record, ttl = 300) => {
+  const cacheKey = `${domain}:${record.type}`
+  const cacheEntry = {
+    record,
+    timestamp: Date.now(),
+    ttl: ttl * 1000, // Convert to milliseconds
+    hits: 0
+  }
+  
+  dnsCache.set(cacheKey, cacheEntry)
+  
+  // Clean expired entries
+  setTimeout(() => {
+    if (dnsCache.has(cacheKey)) {
+      const entry = dnsCache.get(cacheKey)
+      if (Date.now() - entry.timestamp > entry.ttl) {
+        dnsCache.delete(cacheKey)
+      }
+    }
+  }, ttl * 1000)
+}
+
+// Get cached DNS record
+const getCachedDNSRecord = (domain, type) => {
+  const cacheKey = `${domain}:${type}`
+  const entry = dnsCache.get(cacheKey)
+  
+  if (!entry) return null
+  
+  // Check if expired
+  if (Date.now() - entry.timestamp > entry.ttl) {
+    dnsCache.delete(cacheKey)
+    return null
+  }
+  
+  entry.hits++
+  return entry.record
+}
+
+// DNS Utility Functions
+const validateDNSRecord = (type, value) => {
+  const recordType = DNS_RECORD_TYPES[type]
+  if (!recordType) return false
+  
+  return recordType.validation.test(value)
+}
+
+const checkDNSPropagation = async (domain, recordType = 'A') => {
+  try {
+    // Simulate DNS lookup - In real implementation, use DNS API
+    const response = await fetch(`https://dns.google/resolve?name=${domain}&type=${recordType}`)
+    const data = await response.json()
+    
+    return {
+      success: true,
+      records: data.Answer || [],
+      propagated: data.Status === 0,
+      ttl: data.Answer?.[0]?.TTL || null
+    }
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      propagated: false
+    }
+  }
+}
+
+const generateDNSConfig = (domain, records) => {
+  let config = `; DNS Configuration for ${domain}\n`
+  config += `; Generated at: ${new Date().toISOString()}\n`
+  config += `; Traffic Management Platform\n\n`
+  
+  config += `$ORIGIN ${domain}.\n`
+  config += `$TTL 3600\n\n`
+  
+  // SOA Record
+  config += `@\tIN\tSOA\tns1.${domain}. admin.${domain}. (\n`
+  config += `\t\t\t${Date.now()}\t; serial\n`
+  config += `\t\t\t3600\t\t; refresh\n`
+  config += `\t\t\t1800\t\t; retry\n`
+  config += `\t\t\t604800\t\t; expire\n`
+  config += `\t\t\t86400 )\t\t; minimum TTL\n\n`
+  
+  // Add each DNS record
+  records.forEach(record => {
+    const name = record.name === '@' ? '@' : record.name
+    const ttl = record.ttl || 3600
+    config += `${name}\t${ttl}\tIN\t${record.type}\t${record.value}\n`
+  })
+  
+  return config
+}
+
+// Advanced DNS Functions
+const performDNSLookup = async (domain, servers = ['8.8.8.8', '1.1.1.1', '9.9.9.9']) => {
+  const results = {}
+  
+  for (const server of servers) {
+    try {
+      // Simulate different DNS servers - In real implementation, use actual DNS queries
+      const response = await fetch(`https://dns.google/resolve?name=${domain}&type=A`)
+      const data = await response.json()
+      
+      results[server] = {
+        success: true,
+        records: data.Answer || [],
+        responseTime: Math.floor(Math.random() * 100) + 10, // Simulated response time
+        server: server
+      }
+    } catch (error) {
+      results[server] = {
+        success: false,
+        error: error.message,
+        server: server
+      }
+    }
+  }
+  
+  return results
+}
+
+const checkDNSHealth = async (domain) => {
+  const checks = {
+    propagation: await checkDNSPropagation(domain),
+    lookup: await performDNSLookup(domain),
+    connectivity: await checkDomainStatus(domain)
+  }
+  
+  const health = {
+    status: 'healthy',
+    issues: [],
+    score: 100
+  }
+  
+  // Analyze results
+  if (!checks.propagation.propagated) {
+    health.issues.push('DNS kayıtları henüz yayılmamış')
+    health.score -= 30
+    health.status = 'warning'
+  }
+  
+  if (checks.connectivity === 'error') {
+    health.issues.push('Domain erişilemiyor')
+    health.score -= 40
+    health.status = 'error'
+  }
+  
+  const successfulLookups = Object.values(checks.lookup).filter(r => r.success).length
+  if (successfulLookups < 2) {
+    health.issues.push('DNS server yanıtları tutarsız')
+    health.score -= 20
+    health.status = health.status === 'healthy' ? 'warning' : health.status
+  }
+  
+  if (health.score < 50) health.status = 'error'
+  else if (health.score < 80) health.status = 'warning'
+  
+  return { ...health, checks }
+}
+
 // Domain status checking
 const checkDomainStatus = async (domainName) => {
   // Clean domain name (remove protocol if exists)
@@ -148,6 +633,74 @@ const initializeDomains = () => {
 }
 
 initializeDomains()
+
+// Initialize DNS records with demo data
+const initializeDNSRecords = () => {
+  const demoRecords = [
+    {
+      id: 'dns_1',
+      domain: 'example.com',
+      name: '@',
+      type: 'A',
+      value: '207.180.204.60',
+      ttl: 3600,
+      priority: null,
+      provider: 'CLOUDFLARE',
+      status: 'active',
+      lastChecked: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      propagationStatus: 'propagated'
+    },
+    {
+      id: 'dns_2',
+      domain: 'example.com',
+      name: 'www',
+      type: 'CNAME',
+      value: 'example.com',
+      ttl: 3600,
+      priority: null,
+      provider: 'CLOUDFLARE',
+      status: 'active',
+      lastChecked: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      propagationStatus: 'propagated'
+    },
+    {
+      id: 'dns_3',
+      domain: 'test-domain.com',
+      name: '@',
+      type: 'A',
+      value: '207.180.204.60',
+      ttl: 1800,
+      priority: null,
+      provider: 'GODADDY',
+      status: 'pending',
+      lastChecked: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      propagationStatus: 'propagating'
+    },
+    {
+      id: 'dns_4',
+      domain: 'example.com',
+      name: 'mail',
+      type: 'MX',
+      value: '10 mail.example.com',
+      ttl: 3600,
+      priority: 10,
+      provider: 'CLOUDFLARE',
+      status: 'active',
+      lastChecked: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      propagationStatus: 'propagated'
+    }
+  ]
+  
+  demoRecords.forEach(record => {
+    dnsRecords.set(record.id, record)
+  })
+}
+
+initializeDNSRecords()
 
 // NGINX Config Generator
 function generateNginxConfig(options) {
@@ -581,6 +1134,690 @@ app.get('/api/domains/:id/stats', requireAuth, (c) => {
   return c.json({ success: true, stats })
 })
 
+// =============================================================================
+// DNS Management API Routes
+// =============================================================================
+
+// Get all DNS records
+app.get('/api/dns', requireAuth, (c) => {
+  const records = Array.from(dnsRecords.values()).map(record => ({
+    ...record,
+    // Add computed fields
+    isHealthy: record.status === 'active' && record.propagationStatus === 'propagated',
+    ageInDays: Math.floor((Date.now() - new Date(record.createdAt).getTime()) / (1000 * 60 * 60 * 24))
+  }))
+  
+  return c.json({ 
+    success: true, 
+    records,
+    total: records.length,
+    providers: DNS_PROVIDERS,
+    recordTypes: DNS_RECORD_TYPES
+  })
+})
+
+// Get DNS records for a specific domain
+app.get('/api/dns/domain/:domain', requireAuth, (c) => {
+  const domain = c.req.param('domain')
+  const records = Array.from(dnsRecords.values()).filter(record => record.domain === domain)
+  
+  return c.json({ 
+    success: true, 
+    domain,
+    records,
+    total: records.length 
+  })
+})
+
+// Add new DNS record
+app.post('/api/dns', requireAuth, async (c) => {
+  try {
+    const { domain, name, type, value, ttl, priority, provider } = await c.req.json()
+    
+    // Validation
+    if (!domain || !name || !type || !value) {
+      return c.json({ 
+        success: false, 
+        message: 'Domain, name, type ve value alanları zorunludur' 
+      }, 400)
+    }
+    
+    if (!DNS_RECORD_TYPES[type]) {
+      return c.json({ 
+        success: false, 
+        message: 'Geçersiz DNS record tipi' 
+      }, 400)
+    }
+    
+    if (!validateDNSRecord(type, value)) {
+      return c.json({ 
+        success: false, 
+        message: `${type} record için geçersiz değer formatı` 
+      }, 400)
+    }
+    
+    const recordId = 'dns_' + Date.now()
+    const newRecord = {
+      id: recordId,
+      domain: domain.toLowerCase(),
+      name: name || '@',
+      type: type.toUpperCase(),
+      value,
+      ttl: ttl || 3600,
+      priority: type === 'MX' ? priority : null,
+      provider: provider || 'CUSTOM',
+      status: 'pending',
+      lastChecked: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      propagationStatus: 'pending'
+    }
+    
+    dnsRecords.set(recordId, newRecord)
+    
+    // Simulate DNS propagation check (async)
+    setTimeout(async () => {
+      const record = dnsRecords.get(recordId)
+      if (record) {
+        record.status = 'active'
+        record.propagationStatus = 'propagated'
+        record.lastChecked = new Date().toISOString()
+        dnsRecords.set(recordId, record)
+      }
+    }, 3000)
+    
+    return c.json({ 
+      success: true, 
+      message: 'DNS kaydı başarıyla oluşturuldu',
+      record: newRecord
+    })
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      message: 'DNS kaydı oluşturulurken hata oluştu' 
+    }, 500)
+  }
+})
+
+// Update DNS record
+app.put('/api/dns/:id', requireAuth, async (c) => {
+  try {
+    const id = c.req.param('id')
+    const updates = await c.req.json()
+    
+    const record = dnsRecords.get(id)
+    if (!record) {
+      return c.json({ 
+        success: false, 
+        message: 'DNS kaydı bulunamadı' 
+      }, 404)
+    }
+    
+    // Validate if value is being updated
+    if (updates.value && updates.type && !validateDNSRecord(updates.type, updates.value)) {
+      return c.json({ 
+        success: false, 
+        message: `${updates.type} record için geçersiz değer formatı` 
+      }, 400)
+    }
+    
+    // Update record
+    const updatedRecord = {
+      ...record,
+      ...updates,
+      lastChecked: new Date().toISOString(),
+      status: updates.value || updates.type ? 'pending' : record.status,
+      propagationStatus: updates.value || updates.type ? 'pending' : record.propagationStatus
+    }
+    
+    dnsRecords.set(id, updatedRecord)
+    
+    return c.json({ 
+      success: true, 
+      message: 'DNS kaydı güncellendi',
+      record: updatedRecord
+    })
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      message: 'DNS kaydı güncellenirken hata oluştu' 
+    }, 500)
+  }
+})
+
+// Delete DNS record
+app.delete('/api/dns/:id', requireAuth, (c) => {
+  const id = c.req.param('id')
+  
+  if (!dnsRecords.has(id)) {
+    return c.json({ 
+      success: false, 
+      message: 'DNS kaydı bulunamadı' 
+    }, 404)
+  }
+  
+  dnsRecords.delete(id)
+  
+  return c.json({ 
+    success: true, 
+    message: 'DNS kaydı silindi' 
+  })
+})
+
+// Check DNS propagation
+app.post('/api/dns/:id/check-propagation', requireAuth, async (c) => {
+  try {
+    const id = c.req.param('id')
+    const record = dnsRecords.get(id)
+    
+    if (!record) {
+      return c.json({ 
+        success: false, 
+        message: 'DNS kaydı bulunamadı' 
+      }, 404)
+    }
+    
+    const propagation = await checkDNSPropagation(record.domain, record.type)
+    
+    // Update record status based on propagation
+    record.propagationStatus = propagation.propagated ? 'propagated' : 'propagating'
+    record.lastChecked = new Date().toISOString()
+    dnsRecords.set(id, record)
+    
+    return c.json({ 
+      success: true, 
+      propagation,
+      record
+    })
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      message: 'DNS propagation kontrolünde hata oluştu' 
+    }, 500)
+  }
+})
+
+// Bulk DNS operations
+app.post('/api/dns/bulk', requireAuth, async (c) => {
+  try {
+    const { action, records } = await c.req.json()
+    
+    if (!action || !Array.isArray(records)) {
+      return c.json({ 
+        success: false, 
+        message: 'Geçersiz bulk işlem parametreleri' 
+      }, 400)
+    }
+    
+    const results = []
+    
+    for (const recordData of records) {
+      try {
+        switch (action) {
+          case 'create':
+            const recordId = 'dns_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5)
+            const newRecord = {
+              id: recordId,
+              ...recordData,
+              status: 'pending',
+              createdAt: new Date().toISOString(),
+              lastChecked: new Date().toISOString(),
+              propagationStatus: 'pending'
+            }
+            dnsRecords.set(recordId, newRecord)
+            results.push({ success: true, record: newRecord })
+            break
+            
+          case 'delete':
+            if (dnsRecords.has(recordData.id)) {
+              dnsRecords.delete(recordData.id)
+              results.push({ success: true, id: recordData.id })
+            } else {
+              results.push({ success: false, id: recordData.id, error: 'Record not found' })
+            }
+            break
+            
+          default:
+            results.push({ success: false, error: 'Unknown action' })
+        }
+      } catch (error) {
+        results.push({ success: false, error: error.message })
+      }
+    }
+    
+    return c.json({ 
+      success: true, 
+      message: `Bulk ${action} işlemi tamamlandı`,
+      results
+    })
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      message: 'Bulk işlem sırasında hata oluştu' 
+    }, 500)
+  }
+})
+
+// DNS health check for domain
+app.post('/api/dns/health-check/:domain', requireAuth, async (c) => {
+  try {
+    const domain = c.req.param('domain')
+    const health = await checkDNSHealth(domain)
+    
+    return c.json({ 
+      success: true, 
+      domain,
+      health
+    })
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      message: 'DNS health check sırasında hata oluştu' 
+    }, 500)
+  }
+})
+
+// Generate DNS zone file
+app.get('/api/dns/zone-file/:domain', requireAuth, (c) => {
+  try {
+    const domain = c.req.param('domain')
+    const domainRecords = Array.from(dnsRecords.values()).filter(record => record.domain === domain)
+    
+    if (domainRecords.length === 0) {
+      return c.json({ 
+        success: false, 
+        message: 'Bu domain için DNS kaydı bulunamadı' 
+      }, 404)
+    }
+    
+    const zoneFile = generateDNSConfig(domain, domainRecords)
+    
+    // Set headers for file download
+    c.header('Content-Type', 'text/plain')
+    c.header('Content-Disposition', `attachment; filename="${domain}.zone"`)
+    
+    return c.text(zoneFile)
+  } catch (error) {
+    return c.json({ 
+      success: false, 
+      message: 'Zone file oluşturulurken hata oluştu' 
+    }, 500)
+  }
+})
+
+// ==============================================================================
+// ADVANCED DNS MANAGEMENT ENDPOINTS
+// ==============================================================================
+
+// Geographic DNS Resolution
+app.get('/api/dns/geo-resolve/:domain', requireAuth, async (c) => {
+  try {
+    const domain = c.req.param('domain')
+    const clientIP = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '127.0.0.1'
+    
+    if (!GEODNS_CONFIG.enabled) {
+      return c.json({
+        success: false,
+        message: 'GeoDNS özelliği devre dışı'
+      })
+    }
+    
+    const resolvedServer = resolveGeoDNS(clientIP, domain)
+    const country = getCountryFromIP(clientIP)
+    
+    return c.json({
+      success: true,
+      domain,
+      clientIP,
+      country,
+      resolvedServer,
+      geoRule: GEODNS_CONFIG.rules[country] || GEODNS_CONFIG.rules.DEFAULT
+    })
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'GeoDNS çözümleme hatası: ' + error.message
+    }, 500)
+  }
+})
+
+// Advanced Health Monitoring
+app.post('/api/dns/advanced-health-check', requireAuth, async (c) => {
+  try {
+    const { targets, protocols = ['https'], includeMetrics = true } = await c.req.json()
+    
+    if (!targets || !Array.isArray(targets)) {
+      return c.json({
+        success: false,
+        message: 'Targets array gereklidir'
+      }, 400)
+    }
+    
+    const results = []
+    
+    for (const target of targets) {
+      for (const protocol of protocols) {
+        const healthResult = await performHealthCheck(target, protocol)
+        
+        if (includeMetrics) {
+          // Store health metrics
+          const metricKey = `${target}:${protocol}`
+          if (!healthStatus.has(metricKey)) {
+            healthStatus.set(metricKey, [])
+          }
+          
+          const metrics = healthStatus.get(metricKey)
+          metrics.push(healthResult)
+          
+          // Keep only last 100 entries
+          if (metrics.length > 100) {
+            metrics.splice(0, metrics.length - 100)
+          }
+        }
+        
+        results.push({
+          target,
+          protocol,
+          ...healthResult
+        })
+      }
+    }
+    
+    return c.json({
+      success: true,
+      results,
+      summary: {
+        total: results.length,
+        healthy: results.filter(r => r.healthy).length,
+        avgResponseTime: results.reduce((sum, r) => sum + r.responseTime, 0) / results.length
+      }
+    })
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'Gelişmiş health check hatası: ' + error.message
+    }, 500)
+  }
+})
+
+// Bot Detection Analysis
+app.post('/api/dns/bot-detection', requireAuth, async (c) => {
+  try {
+    const clientIP = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '127.0.0.1'
+    const userAgent = c.req.header('user-agent') || ''
+    const referer = c.req.header('referer') || ''
+    
+    // Create a mock request object for analysis
+    const mockRequest = {
+      headers: new Map([
+        ['user-agent', userAgent],
+        ['referer', referer]
+      ]),
+      url: c.req.url
+    }
+    
+    const botAnalysis = detectBotFromDNSPattern(mockRequest, clientIP)
+    
+    // Log the analysis if enabled
+    if (BOT_DETECTION_CONFIG.actions.log) {
+      console.log('Bot Detection Analysis:', {
+        clientIP,
+        userAgent,
+        referer,
+        analysis: botAnalysis,
+        timestamp: new Date().toISOString()
+      })
+    }
+    
+    return c.json({
+      success: true,
+      clientIP,
+      analysis: botAnalysis,
+      config: BOT_DETECTION_CONFIG,
+      recommendedAction: botAnalysis.action
+    })
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'Bot detection analizi hatası: ' + error.message
+    }, 500)
+  }
+})
+
+// DNS Security Analysis
+app.get('/api/dns/security-analysis', requireAuth, (c) => {
+  try {
+    const clientIP = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || '127.0.0.1'
+    
+    // Analyze current security metrics
+    const securityMetrics = {
+      rateLimiting: {
+        enabled: DNS_SECURITY_CONFIG.rateLimiting.enabled,
+        currentQueries: dnsMetrics.has(clientIP) ? dnsMetrics.get(clientIP).length : 0,
+        limit: DNS_SECURITY_CONFIG.rateLimiting.perIP,
+        status: checkRapidQueries(clientIP) ? 'EXCEEDED' : 'OK'
+      },
+      tunneling: {
+        enabled: DNS_SECURITY_CONFIG.tunneling.enabled,
+        detectedPatterns: [],
+        status: 'OK'
+      },
+      geoBlocking: {
+        enabled: DNS_SECURITY_CONFIG.geoBlocking.enabled,
+        clientCountry: getCountryFromIP(clientIP),
+        blocked: false,
+        allowed: true
+      }
+    }
+    
+    // Check for security threats
+    const threats = []
+    if (securityMetrics.rateLimiting.status === 'EXCEEDED') {
+      threats.push({
+        type: 'RATE_LIMITING',
+        severity: 'HIGH',
+        message: 'IP adresi rate limit aştı',
+        action: 'BLOCK_RECOMMENDED'
+      })
+    }
+    
+    // Check if IP is from blocked country
+    if (DNS_SECURITY_CONFIG.geoBlocking.enabled && 
+        DNS_SECURITY_CONFIG.geoBlocking.blockedCountries.includes(securityMetrics.geoBlocking.clientCountry)) {
+      securityMetrics.geoBlocking.blocked = true
+      securityMetrics.geoBlocking.allowed = false
+      threats.push({
+        type: 'GEO_BLOCKING',
+        severity: 'MEDIUM',
+        message: 'IP adresi bloklu ülkeden',
+        action: 'BLOCK'
+      })
+    }
+    
+    return c.json({
+      success: true,
+      clientIP,
+      metrics: securityMetrics,
+      threats,
+      overallSecurity: threats.length === 0 ? 'SECURE' : 'AT_RISK',
+      config: DNS_SECURITY_CONFIG
+    })
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'Güvenlik analizi hatası: ' + error.message
+    }, 500)
+  }
+})
+
+// Load Balancing Configuration
+app.get('/api/dns/load-balancing', requireAuth, (c) => {
+  try {
+    // Get current load balancing status
+    const servers = Array.from(dnsRecords.values())
+      .filter(record => record.type === 'A' || record.type === 'AAAA')
+      .map(record => ({
+        id: record.id,
+        domain: record.domain,
+        ip: record.value,
+        healthy: record.status === 'active',
+        connections: Math.floor(Math.random() * 100), // Mock data
+        weight: record.priority || 1,
+        responseTime: Math.floor(Math.random() * 200) + 50
+      }))
+    
+    return c.json({
+      success: true,
+      config: LOAD_BALANCING_CONFIG,
+      servers,
+      algorithm: 'round_robin', // Current algorithm
+      metrics: {
+        totalServers: servers.length,
+        healthyServers: servers.filter(s => s.healthy).length,
+        avgResponseTime: servers.reduce((sum, s) => sum + s.responseTime, 0) / servers.length || 0,
+        totalConnections: servers.reduce((sum, s) => sum + s.connections, 0)
+      }
+    })
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'Load balancing bilgisi alınamadı: ' + error.message
+    }, 500)
+  }
+})
+
+// Update Load Balancing Algorithm
+app.post('/api/dns/load-balancing/algorithm', requireAuth, async (c) => {
+  try {
+    const { algorithm, weights } = await c.req.json()
+    
+    if (!LOAD_BALANCING_CONFIG.algorithms.includes(algorithm)) {
+      return c.json({
+        success: false,
+        message: 'Geçersiz load balancing algoritması'
+      }, 400)
+    }
+    
+    // Update algorithm (in production, this would be persisted)
+    LOAD_BALANCING_CONFIG.currentAlgorithm = algorithm
+    
+    // Update server weights if provided
+    if (weights && typeof weights === 'object') {
+      for (const [serverId, weight] of Object.entries(weights)) {
+        if (dnsRecords.has(serverId)) {
+          const record = dnsRecords.get(serverId)
+          record.priority = weight
+          dnsRecords.set(serverId, record)
+        }
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: 'Load balancing algoritması güncellendi',
+      algorithm,
+      weights
+    })
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'Load balancing güncellenemedi: ' + error.message
+    }, 500)
+  }
+})
+
+// DNS Cache Statistics
+app.get('/api/dns/cache-stats', requireAuth, (c) => {
+  try {
+    const cacheEntries = Array.from(dnsCache.entries()).map(([key, entry]) => ({
+      key,
+      domain: key.split(':')[0],
+      type: key.split(':')[1],
+      hits: entry.hits,
+      age: Date.now() - entry.timestamp,
+      ttl: entry.ttl,
+      expired: (Date.now() - entry.timestamp) > entry.ttl
+    }))
+    
+    const stats = {
+      totalEntries: cacheEntries.length,
+      totalHits: cacheEntries.reduce((sum, entry) => sum + entry.hits, 0),
+      expiredEntries: cacheEntries.filter(entry => entry.expired).length,
+      hitRatio: cacheEntries.length > 0 ? 
+        (cacheEntries.reduce((sum, entry) => sum + entry.hits, 0) / cacheEntries.length).toFixed(2) : 0,
+      avgAge: cacheEntries.length > 0 ?
+        (cacheEntries.reduce((sum, entry) => sum + entry.age, 0) / cacheEntries.length / 1000).toFixed(2) + 's' : '0s'
+    }
+    
+    return c.json({
+      success: true,
+      stats,
+      entries: cacheEntries.slice(0, 20), // Return first 20 entries
+      cacheConfig: {
+        defaultTTL: 300,
+        maxEntries: 1000,
+        cleanupInterval: 60
+      }
+    })
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'Cache istatistikleri alınamadı: ' + error.message
+    }, 500)
+  }
+})
+
+// Clear DNS Cache
+app.delete('/api/dns/cache', requireAuth, (c) => {
+  try {
+    const clearedEntries = dnsCache.size
+    dnsCache.clear()
+    
+    return c.json({
+      success: true,
+      message: `${clearedEntries} cache girdisi temizlendi`,
+      clearedEntries
+    })
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'Cache temizlenemedi: ' + error.message
+    }, 500)
+  }
+})
+
+// DNS Metrics Export
+app.get('/api/dns/metrics/export', requireAuth, (c) => {
+  try {
+    const exportData = {
+      timestamp: new Date().toISOString(),
+      dnsRecords: Array.from(dnsRecords.values()),
+      healthMetrics: Object.fromEntries(healthStatus),
+      queryMetrics: Object.fromEntries(dnsMetrics),
+      cacheStats: {
+        totalEntries: dnsCache.size,
+        entries: Array.from(dnsCache.entries())
+      },
+      configuration: {
+        geodns: GEODNS_CONFIG,
+        health: DNS_HEALTH_CONFIG,
+        security: DNS_SECURITY_CONFIG,
+        loadBalancing: LOAD_BALANCING_CONFIG,
+        botDetection: BOT_DETECTION_CONFIG
+      }
+    }
+    
+    c.header('Content-Type', 'application/json')
+    c.header('Content-Disposition', `attachment; filename="dns-metrics-${Date.now()}.json"`)
+    
+    return c.json(exportData)
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'Metrics export hatası: ' + error.message
+    }, 500)
+  }
+})
+
 // Deployment testing API
 app.get('/api/test-deployment', requireAuth, async (c) => {
   const serverIp = c.req.query('ip')
@@ -778,6 +2015,10 @@ app.get('/dashboard', (c) => {
                                 class="nav-btn px-4 py-2 rounded-lg transition-colors">
                             <i class="fas fa-chart-line mr-2"></i>Trafik
                         </button>
+                        <button onclick="showSection('dns')" id="btn-dns"
+                                class="nav-btn px-4 py-2 rounded-lg transition-colors">
+                            <i class="fas fa-network-wired mr-2"></i>DNS
+                        </button>
                         <button onclick="showSection('nginx')" id="btn-nginx"
                                 class="nav-btn px-4 py-2 rounded-lg transition-colors">
                             <i class="fas fa-server mr-2"></i>NGINX
@@ -934,6 +2175,325 @@ app.get('/dashboard', (c) => {
                 </div>
             </div>
 
+            <!-- DNS Management Section -->
+            <div id="section-dns" class="section hidden">
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">
+                            <i class="fas fa-network-wired mr-2 text-purple-400"></i>
+                            DNS Yönetimi
+                        </h2>
+                        
+                        <div class="flex space-x-3">
+                            <button onclick="showDNSAddModal()" 
+                                    class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg font-medium">
+                                <i class="fas fa-plus mr-2"></i>DNS Kaydı Ekle
+                            </button>
+                            <button onclick="bulkDNSOperations()" 
+                                    class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">
+                                <i class="fas fa-layer-group mr-2"></i>Toplu İşlem
+                            </button>
+                            <button onclick="refreshDNSRecords()" 
+                                    class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg font-medium">
+                                <i class="fas fa-sync-alt mr-2"></i>Yenile
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- DNS Statistics Cards -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-gray-300 text-sm">Toplam Kayıt</p>
+                                    <p class="text-2xl font-bold text-purple-400" id="dns-total-records">0</p>
+                                </div>
+                                <div class="bg-purple-500 bg-opacity-20 p-3 rounded-full">
+                                    <i class="fas fa-list text-purple-400"></i>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-gray-300 text-sm">Aktif Kayıt</p>
+                                    <p class="text-2xl font-bold text-green-400" id="dns-active-records">0</p>
+                                </div>
+                                <div class="bg-green-500 bg-opacity-20 p-3 rounded-full">
+                                    <i class="fas fa-check-circle text-green-400"></i>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-gray-300 text-sm">Propagation</p>
+                                    <p class="text-2xl font-bold text-yellow-400" id="dns-propagating-records">0</p>
+                                </div>
+                                <div class="bg-yellow-500 bg-opacity-20 p-3 rounded-full">
+                                    <i class="fas fa-hourglass-half text-yellow-400"></i>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-gray-300 text-sm">Sağlayıcı</p>
+                                    <p class="text-2xl font-bold text-blue-400" id="dns-providers-count">0</p>
+                                </div>
+                                <div class="bg-blue-500 bg-opacity-20 p-3 rounded-full">
+                                    <i class="fas fa-cloud text-blue-400"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- DNS Records Filter -->
+                    <div class="bg-gray-700 p-4 rounded-lg mb-6">
+                        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-2">Domain Filtresi</label>
+                                <input type="text" id="dns-domain-filter" placeholder="Domain ara..." 
+                                       class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-2">Record Tipi</label>
+                                <select id="dns-type-filter" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
+                                    <option value="">Tümü</option>
+                                    <option value="A">A Record</option>
+                                    <option value="AAAA">AAAA Record</option>
+                                    <option value="CNAME">CNAME Record</option>
+                                    <option value="MX">MX Record</option>
+                                    <option value="TXT">TXT Record</option>
+                                    <option value="NS">NS Record</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-2">Durum</label>
+                                <select id="dns-status-filter" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
+                                    <option value="">Tümü</option>
+                                    <option value="active">Aktif</option>
+                                    <option value="pending">Beklemede</option>
+                                    <option value="error">Hatalı</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-2">Sağlayıcı</label>
+                                <select id="dns-provider-filter" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
+                                    <option value="">Tümü</option>
+                                    <option value="CLOUDFLARE">Cloudflare</option>
+                                    <option value="GODADDY">GoDaddy</option>
+                                    <option value="NAMECHEAP">Namecheap</option>
+                                    <option value="CUSTOM">Özel</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- DNS Records Table -->
+                    <div class="bg-gray-700 rounded-lg overflow-hidden">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <thead class="bg-gray-600">
+                                    <tr>
+                                        <th class="px-4 py-3 text-left">
+                                            <input type="checkbox" id="select-all-dns" class="rounded">
+                                        </th>
+                                        <th class="px-4 py-3 text-left">Domain</th>
+                                        <th class="px-4 py-3 text-left">Name</th>
+                                        <th class="px-4 py-3 text-left">Type</th>
+                                        <th class="px-4 py-3 text-left">Value</th>
+                                        <th class="px-4 py-3 text-left">TTL</th>
+                                        <th class="px-4 py-3 text-left">Provider</th>
+                                        <th class="px-4 py-3 text-left">Status</th>
+                                        <th class="px-4 py-3 text-left">Propagation</th>
+                                        <th class="px-4 py-3 text-left">İşlemler</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="dns-records-table" class="divide-y divide-gray-600">
+                                    <!-- DNS records will be populated here -->
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <div id="dns-loading" class="text-center py-8 hidden">
+                            <i class="fas fa-spinner fa-spin text-2xl text-purple-400"></i>
+                            <p class="text-gray-400 mt-2">DNS kayıtları yükleniyor...</p>
+                        </div>
+                        
+                        <div id="dns-empty" class="text-center py-8 hidden">
+                            <i class="fas fa-inbox text-4xl text-gray-500 mb-4"></i>
+                            <p class="text-gray-400">Henüz DNS kaydı bulunmuyor.</p>
+                            <button onclick="showDNSAddModal()" 
+                                    class="mt-4 bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg">
+                                <i class="fas fa-plus mr-2"></i>İlk DNS kaydını ekle
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Advanced DNS Features -->
+                    <div class="mt-8 space-y-6">
+                        <!-- Advanced Features Tab Navigation -->
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <h3 class="text-lg font-semibold mb-4 text-purple-300">
+                                <i class="fas fa-rocket mr-2"></i>Gelişmiş DNS Özellikleri
+                            </h3>
+                            <div class="flex flex-wrap gap-2 mb-4">
+                                <button onclick="showAdvancedDNSSection('geodns')" 
+                                        class="advanced-dns-tab px-4 py-2 bg-gray-600 hover:bg-purple-600 rounded-lg transition-colors">
+                                    <i class="fas fa-globe mr-2"></i>GeoDNS
+                                </button>
+                                <button onclick="showAdvancedDNSSection('health')" 
+                                        class="advanced-dns-tab px-4 py-2 bg-gray-600 hover:bg-purple-600 rounded-lg transition-colors">
+                                    <i class="fas fa-heartbeat mr-2"></i>Health Check
+                                </button>
+                                <button onclick="showAdvancedDNSSection('security')" 
+                                        class="advanced-dns-tab px-4 py-2 bg-gray-600 hover:bg-purple-600 rounded-lg transition-colors">
+                                    <i class="fas fa-shield-alt mr-2"></i>Güvenlik
+                                </button>
+                                <button onclick="showAdvancedDNSSection('loadbalancing')" 
+                                        class="advanced-dns-tab px-4 py-2 bg-gray-600 hover:bg-purple-600 rounded-lg transition-colors">
+                                    <i class="fas fa-balance-scale mr-2"></i>Load Balancing
+                                </button>
+                                <button onclick="showAdvancedDNSSection('cache')" 
+                                        class="advanced-dns-tab px-4 py-2 bg-gray-600 hover:bg-purple-600 rounded-lg transition-colors">
+                                    <i class="fas fa-database mr-2"></i>Cache
+                                </button>
+                                <button onclick="exportDNSMetrics()" 
+                                        class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg transition-colors">
+                                    <i class="fas fa-download mr-2"></i>Export
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- GeoDNS Section -->
+                        <div id="advanced-dns-geodns" class="advanced-dns-section hidden bg-gray-700 p-4 rounded-lg">
+                            <h4 class="font-semibold text-purple-300 mb-3">
+                                <i class="fas fa-globe mr-2"></i>GeoDNS Management
+                            </h4>
+                            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                <div>
+                                    <div class="mb-4">
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">Test Domain</label>
+                                        <input type="text" id="geodns-test-domain" 
+                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
+                                               placeholder="example.com">
+                                    </div>
+                                    <button onclick="testGeoDNSResolution()" 
+                                            class="w-full bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg">
+                                        <i class="fas fa-test-tube mr-2"></i>GeoDNS Testi Yap
+                                    </button>
+                                </div>
+                                <div id="geodns-results" class="text-sm">
+                                    <div class="bg-gray-600 p-3 rounded border-2 border-dashed border-gray-500 text-center text-gray-400">
+                                        GeoDNS test sonuçları burada görünecek
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Advanced Health Check Section -->
+                        <div id="advanced-dns-health" class="advanced-dns-section hidden bg-gray-700 p-4 rounded-lg">
+                            <h4 class="font-semibold text-purple-300 mb-3">
+                                <i class="fas fa-heartbeat mr-2"></i>Gelişmiş Health Monitoring
+                            </h4>
+                            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                <div class="space-y-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">Hedef Sunucular (Her satırda bir)</label>
+                                        <textarea id="health-targets" rows="4" 
+                                                  class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
+                                                  placeholder="example.com&#10;api.example.com&#10;cdn.example.com"></textarea>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">Protokoller</label>
+                                        <div class="flex space-x-4">
+                                            <label class="flex items-center">
+                                                <input type="checkbox" name="health-protocols" value="https" checked class="mr-2">
+                                                HTTPS
+                                            </label>
+                                            <label class="flex items-center">
+                                                <input type="checkbox" name="health-protocols" value="http" class="mr-2">
+                                                HTTP
+                                            </label>
+                                            <label class="flex items-center">
+                                                <input type="checkbox" name="health-protocols" value="tcp" class="mr-2">
+                                                TCP
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <button onclick="performAdvancedHealthCheck()" 
+                                            class="w-full bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg">
+                                        <i class="fas fa-stethoscope mr-2"></i>Health Check Başlat
+                                    </button>
+                                </div>
+                                <div id="health-results" class="text-sm max-h-64 overflow-y-auto">
+                                    <div class="bg-gray-600 p-3 rounded border-2 border-dashed border-gray-500 text-center text-gray-400">
+                                        Health check sonuçları burada görünecek
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Security Analysis Section -->
+                        <div id="advanced-dns-security" class="advanced-dns-section hidden bg-gray-700 p-4 rounded-lg">
+                            <h4 class="font-semibold text-purple-300 mb-3">
+                                <i class="fas fa-shield-alt mr-2"></i>DNS Güvenlik Analizi
+                            </h4>
+                            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                <div class="space-y-4">
+                                    <button onclick="runBotDetectionAnalysis()" 
+                                            class="w-full bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded-lg">
+                                        <i class="fas fa-robot mr-2"></i>Bot Detection Analizi
+                                    </button>
+                                    <button onclick="runSecurityAnalysis()" 
+                                            class="w-full bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg">
+                                        <i class="fas fa-scan mr-2"></i>Güvenlik Taraması
+                                    </button>
+                                    <div id="bot-detection-results" class="text-sm">
+                                        <div class="bg-gray-600 p-3 rounded border-2 border-dashed border-gray-500 text-center text-gray-400">
+                                            Bot detection analizi burada görünecek
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="security-analysis-results" class="text-sm">
+                                    <div class="bg-gray-600 p-3 rounded border-2 border-dashed border-gray-500 text-center text-gray-400">
+                                        Güvenlik analizi sonuçları burada görünecek
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Load Balancing Section -->
+                        <div id="advanced-dns-loadbalancing" class="advanced-dns-section hidden bg-gray-700 p-4 rounded-lg">
+                            <h4 class="font-semibold text-purple-300 mb-3">
+                                <i class="fas fa-balance-scale mr-2"></i>DNS Load Balancing
+                            </h4>
+                            <div id="load-balancing-info">
+                                <div class="bg-gray-600 p-3 rounded border-2 border-dashed border-gray-500 text-center text-gray-400">
+                                    <i class="fas fa-spinner fa-spin mr-2"></i>Load balancing bilgileri yükleniyor...
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Cache Management Section -->
+                        <div id="advanced-dns-cache" class="advanced-dns-section hidden bg-gray-700 p-4 rounded-lg">
+                            <h4 class="font-semibold text-purple-300 mb-3">
+                                <i class="fas fa-database mr-2"></i>DNS Cache Management
+                            </h4>
+                            <div id="cache-statistics">
+                                <div class="bg-gray-600 p-3 rounded border-2 border-dashed border-gray-500 text-center text-gray-400">
+                                    <i class="fas fa-spinner fa-spin mr-2"></i>Cache istatistikleri yükleniyor...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Security Section -->
             <div id="section-security" class="section hidden">
                 <div class="bg-gray-800 rounded-lg p-6">
@@ -1059,6 +2619,206 @@ app.get('/dashboard', (c) => {
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+
+        <!-- DNS Add Modal -->
+        <div id="dnsAddModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-gray-800 p-6 rounded-lg w-full max-w-md">
+                <h3 class="text-xl font-bold mb-4 flex items-center">
+                    <i class="fas fa-plus text-purple-400 mr-2"></i>
+                    DNS Kaydı Ekle
+                </h3>
+                <form id="dnsAddForm">
+                    <div class="grid grid-cols-1 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Domain</label>
+                            <input type="text" id="dns-domain" required
+                                   class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-purple-400 focus:outline-none"
+                                   placeholder="example.com">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Name</label>
+                            <input type="text" id="dns-name" required
+                                   class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-purple-400 focus:outline-none"
+                                   placeholder="@ veya subdomain">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Type</label>
+                            <select id="dns-type" required onchange="updateDNSValuePlaceholder()"
+                                    class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-purple-400 focus:outline-none">
+                                <option value="">Seçiniz</option>
+                                <option value="A">A Record (IPv4)</option>
+                                <option value="AAAA">AAAA Record (IPv6)</option>
+                                <option value="CNAME">CNAME Record</option>
+                                <option value="MX">MX Record</option>
+                                <option value="TXT">TXT Record</option>
+                                <option value="NS">NS Record</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Value</label>
+                            <input type="text" id="dns-value" required
+                                   class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-purple-400 focus:outline-none"
+                                   placeholder="Değer">
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium mb-2">TTL</label>
+                                <select id="dns-ttl"
+                                        class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-purple-400 focus:outline-none">
+                                    <option value="300">5 dakika</option>
+                                    <option value="1800">30 dakika</option>
+                                    <option value="3600" selected>1 saat</option>
+                                    <option value="7200">2 saat</option>
+                                    <option value="86400">1 gün</option>
+                                </select>
+                            </div>
+                            
+                            <div id="dns-priority-div" class="hidden">
+                                <label class="block text-sm font-medium mb-2">Priority</label>
+                                <input type="number" id="dns-priority" min="0" max="65535"
+                                       class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-purple-400 focus:outline-none"
+                                       placeholder="10">
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Provider</label>
+                            <select id="dns-provider"
+                                    class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-purple-400 focus:outline-none">
+                                <option value="CLOUDFLARE">Cloudflare</option>
+                                <option value="GODADDY">GoDaddy</option>
+                                <option value="NAMECHEAP">Namecheap</option>
+                                <option value="CUSTOM">Özel Sunucu</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="flex space-x-4 mt-6">
+                        <button type="submit" class="flex-1 bg-purple-600 hover:bg-purple-700 py-2 rounded-lg font-medium">
+                            <i class="fas fa-plus mr-2"></i>Ekle
+                        </button>
+                        <button type="button" onclick="hideDNSAddModal()" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded-lg font-medium">
+                            <i class="fas fa-times mr-2"></i>İptal
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- DNS Edit Modal -->
+        <div id="dnsEditModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-gray-800 p-6 rounded-lg w-full max-w-md">
+                <h3 class="text-xl font-bold mb-4 flex items-center">
+                    <i class="fas fa-edit text-blue-400 mr-2"></i>
+                    DNS Kaydı Düzenle
+                </h3>
+                <form id="dnsEditForm">
+                    <input type="hidden" id="edit-dns-id">
+                    
+                    <div class="grid grid-cols-1 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Domain</label>
+                            <input type="text" id="edit-dns-domain" required
+                                   class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-blue-400 focus:outline-none">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Name</label>
+                            <input type="text" id="edit-dns-name" required
+                                   class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-blue-400 focus:outline-none">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Type</label>
+                            <select id="edit-dns-type" required onchange="updateEditDNSValuePlaceholder()"
+                                    class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-blue-400 focus:outline-none">
+                                <option value="A">A Record (IPv4)</option>
+                                <option value="AAAA">AAAA Record (IPv6)</option>
+                                <option value="CNAME">CNAME Record</option>
+                                <option value="MX">MX Record</option>
+                                <option value="TXT">TXT Record</option>
+                                <option value="NS">NS Record</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Value</label>
+                            <input type="text" id="edit-dns-value" required
+                                   class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-blue-400 focus:outline-none">
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium mb-2">TTL</label>
+                                <select id="edit-dns-ttl"
+                                        class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-blue-400 focus:outline-none">
+                                    <option value="300">5 dakika</option>
+                                    <option value="1800">30 dakika</option>
+                                    <option value="3600">1 saat</option>
+                                    <option value="7200">2 saat</option>
+                                    <option value="86400">1 gün</option>
+                                </select>
+                            </div>
+                            
+                            <div id="edit-dns-priority-div" class="hidden">
+                                <label class="block text-sm font-medium mb-2">Priority</label>
+                                <input type="number" id="edit-dns-priority" min="0" max="65535"
+                                       class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-blue-400 focus:outline-none">
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Provider</label>
+                            <select id="edit-dns-provider"
+                                    class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:border-blue-400 focus:outline-none">
+                                <option value="CLOUDFLARE">Cloudflare</option>
+                                <option value="GODLADDY">GoDaddy</option>
+                                <option value="NAMECHEAP">Namecheap</option>
+                                <option value="CUSTOM">Özel Sunucu</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="flex space-x-4 mt-6">
+                        <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded-lg font-medium">
+                            <i class="fas fa-save mr-2"></i>Güncelle
+                        </button>
+                        <button type="button" onclick="hideDNSEditModal()" class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded-lg font-medium">
+                            <i class="fas fa-times mr-2"></i>İptal
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- DNS Health Check Modal -->
+        <div id="dnsHealthModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-gray-800 p-6 rounded-lg w-full max-w-2xl">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-xl font-bold flex items-center">
+                        <i class="fas fa-heartbeat text-red-400 mr-2"></i>
+                        DNS Sağlık Kontrolü
+                    </h3>
+                    <button onclick="hideDNSHealthModal()" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <div id="dns-health-content" class="space-y-4">
+                    <!-- Health check results will be populated here -->
+                </div>
+                
+                <div class="flex justify-end mt-6">
+                    <button onclick="hideDNSHealthModal()" class="bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-lg">
+                        Kapat
+                    </button>
+                </div>
             </div>
         </div>
 

@@ -1,5 +1,1014 @@
 // Dashboard JavaScript - External file to avoid template literal issues
 
+// =============================================================================
+// ADVANCED DNS MANAGEMENT FUNCTIONS
+// =============================================================================
+
+// Advanced DNS configuration and features
+const advancedDNSConfig = {
+    geodns: { enabled: false, currentCountry: 'TR' },
+    loadBalancing: { algorithm: 'round_robin', enabled: false },
+    botDetection: { enabled: true, threats: 0 },
+    security: { enabled: true, status: 'SECURE' },
+    caching: { enabled: true, hitRatio: 85 }
+}
+
+// GeoDNS Management
+async function testGeoDNSResolution() {
+    try {
+        showNotification('GeoDNS testi başlatılıyor...', 'info');
+        
+        const domain = document.getElementById('geodns-test-domain').value;
+        if (!domain) {
+            showNotification('Lütfen test edilecek domain girin', 'error');
+            return;
+        }
+        
+        const response = await fetch(`/api/dns/geo-resolve/${domain}`, {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            document.getElementById('geodns-results').innerHTML = `
+                <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <h4 class="font-semibold text-green-800">GeoDNS Çözümleme Sonucu</h4>
+                    <div class="mt-2 space-y-1 text-sm text-green-700">
+                        <div><strong>Domain:</strong> ${data.domain}</div>
+                        <div><strong>IP Adresi:</strong> ${data.clientIP}</div>
+                        <div><strong>Ülke:</strong> ${data.country}</div>
+                        <div><strong>Yönlendirilen Sunucu:</strong> ${data.resolvedServer}</div>
+                    </div>
+                </div>
+            `;
+            showNotification('GeoDNS testi tamamlandı', 'success');
+        } else {
+            showNotification('GeoDNS test hatası: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('GeoDNS test hatası: ' + error.message, 'error');
+    }
+}
+
+// Advanced Health Monitoring
+async function performAdvancedHealthCheck() {
+    try {
+        showNotification('Gelişmiş health check başlatılıyor...', 'info');
+        
+        const targets = document.getElementById('health-targets').value.split('\n').filter(t => t.trim());
+        const protocols = Array.from(document.querySelectorAll('input[name="health-protocols"]:checked')).map(cb => cb.value);
+        
+        if (targets.length === 0) {
+            showNotification('Lütfen en az bir hedef girin', 'error');
+            return;
+        }
+        
+        const response = await fetch('/api/dns/advanced-health-check', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                targets: targets,
+                protocols: protocols,
+                includeMetrics: true
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            renderHealthCheckResults(data.results, data.summary);
+            showNotification(`Health check tamamlandı - ${data.summary.healthy}/${data.summary.total} sağlıklı`, 'success');
+        } else {
+            showNotification('Health check hatası: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Health check hatası: ' + error.message, 'error');
+    }
+}
+
+// Render health check results
+function renderHealthCheckResults(results, summary) {
+    const container = document.getElementById('health-results');
+    
+    container.innerHTML = `
+        <div class="bg-gray-50 border rounded-lg p-4 mb-4">
+            <h4 class="font-semibold text-gray-800 mb-2">Özet</h4>
+            <div class="grid grid-cols-3 gap-4 text-sm">
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-blue-600">${summary.total}</div>
+                    <div class="text-gray-600">Toplam Test</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-green-600">${summary.healthy}</div>
+                    <div class="text-gray-600">Sağlıklı</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-2xl font-bold text-orange-600">${Math.round(summary.avgResponseTime)}ms</div>
+                    <div class="text-gray-600">Ort. Yanıt</div>
+                </div>
+            </div>
+        </div>
+        <div class="space-y-2">
+            ${results.map(result => `
+                <div class="border rounded-lg p-3 ${result.healthy ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <span class="font-medium">${result.target}</span>
+                            <span class="text-sm text-gray-500">(${result.protocol})</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-sm">${result.responseTime}ms</span>
+                            <span class="w-3 h-3 rounded-full ${result.healthy ? 'bg-green-500' : 'bg-red-500'}"></span>
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+// Bot Detection Analysis
+async function runBotDetectionAnalysis() {
+    try {
+        showNotification('Bot detection analizi başlatılıyor...', 'info');
+        
+        const response = await fetch('/api/dns/bot-detection', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            renderBotDetectionResults(data.analysis, data.clientIP);
+            showNotification('Bot detection analizi tamamlandı', 'success');
+        } else {
+            showNotification('Bot detection hatası: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Bot detection hatası: ' + error.message, 'error');
+    }
+}
+
+// Render bot detection results
+function renderBotDetectionResults(analysis, clientIP) {
+    const container = document.getElementById('bot-detection-results');
+    
+    const confidenceColor = analysis.confidence > 70 ? 'red' : analysis.confidence > 40 ? 'yellow' : 'green';
+    const actionColor = analysis.action === 'block' ? 'red' : analysis.action === 'redirect' ? 'yellow' : 'green';
+    
+    container.innerHTML = `
+        <div class="bg-gray-50 border rounded-lg p-4">
+            <h4 class="font-semibold text-gray-800 mb-3">Bot Detection Analizi</h4>
+            <div class="space-y-3">
+                <div class="flex justify-between">
+                    <span>IP Adresi:</span>
+                    <span class="font-medium">${clientIP}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Bot Olasılığı:</span>
+                    <span class="font-medium text-${confidenceColor}-600">${analysis.confidence.toFixed(1)}%</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Önerilen Aksiyon:</span>
+                    <span class="font-medium text-${actionColor}-600 capitalize">${analysis.action}</span>
+                </div>
+                <div class="mt-4">
+                    <h5 class="font-medium text-gray-700 mb-2">Tespit Edilen Göstergeler:</h5>
+                    <div class="space-y-1">
+                        ${Object.entries(analysis.indicators).map(([key, value]) => `
+                            <div class="flex justify-between text-sm">
+                                <span>${key.replace(/([A-Z])/g, ' $1').trim()}:</span>
+                                <span class="${value ? 'text-red-600' : 'text-green-600'}">
+                                    ${value ? '✗ Şüpheli' : '✓ Normal'}
+                                </span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Security Analysis
+async function runSecurityAnalysis() {
+    try {
+        showNotification('Güvenlik analizi başlatılıyor...', 'info');
+        
+        const response = await fetch('/api/dns/security-analysis', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            renderSecurityAnalysisResults(data.metrics, data.threats, data.overallSecurity);
+            showNotification('Güvenlik analizi tamamlandı', 'success');
+        } else {
+            showNotification('Güvenlik analizi hatası: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Güvenlik analizi hatası: ' + error.message, 'error');
+    }
+}
+
+// Render security analysis results
+function renderSecurityAnalysisResults(metrics, threats, overallSecurity) {
+    const container = document.getElementById('security-analysis-results');
+    
+    const securityColor = overallSecurity === 'SECURE' ? 'green' : 'red';
+    
+    container.innerHTML = `
+        <div class="bg-gray-50 border rounded-lg p-4">
+            <div class="flex justify-between items-center mb-4">
+                <h4 class="font-semibold text-gray-800">Güvenlik Durumu</h4>
+                <span class="px-3 py-1 rounded-full text-sm font-medium bg-${securityColor}-100 text-${securityColor}-800">
+                    ${overallSecurity}
+                </span>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                <div class="bg-white border rounded p-3">
+                    <h5 class="font-medium text-gray-700 mb-2">Rate Limiting</h5>
+                    <div class="text-sm space-y-1">
+                        <div>Durum: <span class="font-medium">${metrics.rateLimiting.status}</span></div>
+                        <div>Sorgu: ${metrics.rateLimiting.currentQueries}/${metrics.rateLimiting.limit}</div>
+                    </div>
+                </div>
+                
+                <div class="bg-white border rounded p-3">
+                    <h5 class="font-medium text-gray-700 mb-2">Tunneling Detection</h5>
+                    <div class="text-sm space-y-1">
+                        <div>Aktif: <span class="font-medium">${metrics.tunneling.enabled ? 'Evet' : 'Hayır'}</span></div>
+                        <div>Durum: <span class="font-medium">${metrics.tunneling.status}</span></div>
+                    </div>
+                </div>
+                
+                <div class="bg-white border rounded p-3">
+                    <h5 class="font-medium text-gray-700 mb-2">Geo Blocking</h5>
+                    <div class="text-sm space-y-1">
+                        <div>Ülke: <span class="font-medium">${metrics.geoBlocking.clientCountry}</span></div>
+                        <div>İzinli: <span class="font-medium">${metrics.geoBlocking.allowed ? 'Evet' : 'Hayır'}</span></div>
+                    </div>
+                </div>
+            </div>
+            
+            ${threats.length > 0 ? `
+                <div class="bg-red-50 border border-red-200 rounded p-3">
+                    <h5 class="font-medium text-red-800 mb-2">Tespit Edilen Tehditler</h5>
+                    <div class="space-y-2">
+                        ${threats.map(threat => `
+                            <div class="text-sm">
+                                <span class="font-medium text-red-700">${threat.type}:</span>
+                                <span class="text-red-600">${threat.message}</span>
+                                <span class="text-xs text-red-500">(${threat.action})</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            ` : '<div class="bg-green-50 border border-green-200 rounded p-3 text-green-700">Güvenlik tehdidi tespit edilmedi</div>'}
+        </div>
+    `;
+}
+
+// Load Balancing Management
+async function loadLoadBalancingInfo() {
+    try {
+        const response = await fetch('/api/dns/load-balancing', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            renderLoadBalancingInfo(data.servers, data.metrics, data.algorithm);
+        } else {
+            showNotification('Load balancing bilgisi alınamadı: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Load balancing hatası: ' + error.message, 'error');
+    }
+}
+
+// Render load balancing information
+function renderLoadBalancingInfo(servers, metrics, currentAlgorithm) {
+    const container = document.getElementById('load-balancing-info');
+    
+    container.innerHTML = `
+        <div class="bg-gray-50 border rounded-lg p-4 mb-4">
+            <h4 class="font-semibold text-gray-800 mb-3">Load Balancing Özeti</h4>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div class="text-center">
+                    <div class="text-xl font-bold text-blue-600">${metrics.totalServers}</div>
+                    <div class="text-gray-600">Toplam Sunucu</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-xl font-bold text-green-600">${metrics.healthyServers}</div>
+                    <div class="text-gray-600">Sağlıklı</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-xl font-bold text-orange-600">${Math.round(metrics.avgResponseTime)}ms</div>
+                    <div class="text-gray-600">Ort. Yanıt</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-xl font-bold text-purple-600">${metrics.totalConnections}</div>
+                    <div class="text-gray-600">Bağlantı</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Load Balancing Algoritması</label>
+            <select id="lb-algorithm" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                <option value="round_robin" ${currentAlgorithm === 'round_robin' ? 'selected' : ''}>Round Robin</option>
+                <option value="least_connections" ${currentAlgorithm === 'least_connections' ? 'selected' : ''}>Least Connections</option>
+                <option value="weighted" ${currentAlgorithm === 'weighted' ? 'selected' : ''}>Weighted</option>
+                <option value="geographic" ${currentAlgorithm === 'geographic' ? 'selected' : ''}>Geographic</option>
+            </select>
+        </div>
+        
+        <div class="space-y-3">
+            <h5 class="font-medium text-gray-700">Sunucu Durumu</h5>
+            ${servers.map(server => `
+                <div class="border rounded-lg p-3 ${server.healthy ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <span class="font-medium">${server.domain}</span>
+                            <span class="text-sm text-gray-500">(${server.ip})</span>
+                        </div>
+                        <div class="flex items-center space-x-3 text-sm">
+                            <span>Weight: ${server.weight}</span>
+                            <span>${server.connections} conn</span>
+                            <span>${server.responseTime}ms</span>
+                            <span class="w-3 h-3 rounded-full ${server.healthy ? 'bg-green-500' : 'bg-red-500'}"></span>
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+// Cache Statistics
+async function loadCacheStatistics() {
+    try {
+        const response = await fetch('/api/dns/cache-stats', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            renderCacheStatistics(data.stats, data.entries);
+        } else {
+            showNotification('Cache istatistikleri alınamadı: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Cache hatası: ' + error.message, 'error');
+    }
+}
+
+// Render cache statistics
+function renderCacheStatistics(stats, entries) {
+    const container = document.getElementById('cache-statistics');
+    
+    container.innerHTML = `
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+            <div class="bg-blue-50 border border-blue-200 rounded p-3 text-center">
+                <div class="text-xl font-bold text-blue-600">${stats.totalEntries}</div>
+                <div class="text-sm text-blue-700">Toplam Girdi</div>
+            </div>
+            <div class="bg-green-50 border border-green-200 rounded p-3 text-center">
+                <div class="text-xl font-bold text-green-600">${stats.totalHits}</div>
+                <div class="text-sm text-green-700">Toplam Hit</div>
+            </div>
+            <div class="bg-orange-50 border border-orange-200 rounded p-3 text-center">
+                <div class="text-xl font-bold text-orange-600">${stats.hitRatio}</div>
+                <div class="text-sm text-orange-700">Hit Oranı</div>
+            </div>
+            <div class="bg-purple-50 border border-purple-200 rounded p-3 text-center">
+                <div class="text-xl font-bold text-purple-600">${stats.avgAge}</div>
+                <div class="text-sm text-purple-700">Ort. Yaş</div>
+            </div>
+            <div class="bg-red-50 border border-red-200 rounded p-3 text-center">
+                <div class="text-xl font-bold text-red-600">${stats.expiredEntries}</div>
+                <div class="text-sm text-red-700">Süresi Dolmuş</div>
+            </div>
+        </div>
+        
+        <div class="flex justify-between items-center mb-4">
+            <h5 class="font-medium text-gray-700">Cache Girdileri (İlk 20)</h5>
+            <button onclick="clearDNSCache()" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">
+                Cache Temizle
+            </button>
+        </div>
+        
+        <div class="space-y-2 max-h-64 overflow-y-auto">
+            ${entries.map(entry => `
+                <div class="border rounded p-2 text-sm ${entry.expired ? 'bg-red-50 border-red-200' : 'bg-gray-50'}">
+                    <div class="flex justify-between items-center">
+                        <span class="font-medium">${entry.domain}</span>
+                        <div class="flex items-center space-x-2">
+                            <span class="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">${entry.type}</span>
+                            <span class="text-gray-600">${entry.hits} hits</span>
+                            ${entry.expired ? '<span class="text-red-600 text-xs">Expired</span>' : ''}
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+// Clear DNS Cache
+async function clearDNSCache() {
+    try {
+        if (!confirm('Tüm DNS cache temizlenecek. Devam etmek istediğinizden emin misiniz?')) {
+            return;
+        }
+        
+        const response = await fetch('/api/dns/cache', {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(data.message, 'success');
+            loadCacheStatistics(); // Refresh statistics
+        } else {
+            showNotification('Cache temizlenemedi: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Cache temizleme hatası: ' + error.message, 'error');
+    }
+}
+
+// Export DNS Metrics
+async function exportDNSMetrics() {
+    try {
+        showNotification('Metrics export başlatılıyor...', 'info');
+        
+        const response = await fetch('/api/dns/metrics/export', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        if (response.ok) {
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `dns-metrics-${Date.now()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            
+            showNotification('Metrics başarıyla export edildi', 'success');
+        } else {
+            const data = await response.json();
+            showNotification('Export hatası: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Export hatası: ' + error.message, 'error');
+    }
+}
+
+// =============================================================================
+// DNS Management Functions (Original)
+// =============================================================================
+
+let dnsRecords = [];
+let filteredDNSRecords = [];
+
+// Load DNS records
+async function loadDNSRecords() {
+    try {
+        document.getElementById('dns-loading').classList.remove('hidden');
+        document.getElementById('dns-empty').classList.add('hidden');
+        
+        const response = await fetch('/api/dns', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            dnsRecords = data.records;
+            filteredDNSRecords = [...dnsRecords];
+            updateDNSStatistics();
+            renderDNSRecords();
+        } else {
+            showNotification('DNS kayıtları yüklenemedi: ' + data.message, 'error');
+        }
+    } catch (error) {
+        console.error('DNS loading error:', error);
+        showNotification('DNS kayıtları yüklenirken hata oluştu', 'error');
+    } finally {
+        document.getElementById('dns-loading').classList.add('hidden');
+    }
+}
+
+// Update DNS statistics
+function updateDNSStatistics() {
+    const total = dnsRecords.length;
+    const active = dnsRecords.filter(r => r.status === 'active').length;
+    const propagating = dnsRecords.filter(r => r.propagationStatus === 'propagating').length;
+    const providers = [...new Set(dnsRecords.map(r => r.provider))].length;
+    
+    document.getElementById('dns-total-records').textContent = total;
+    document.getElementById('dns-active-records').textContent = active;
+    document.getElementById('dns-propagating-records').textContent = propagating;
+    document.getElementById('dns-providers-count').textContent = providers;
+}
+
+// Render DNS records table
+function renderDNSRecords() {
+    const tbody = document.getElementById('dns-records-table');
+    
+    if (filteredDNSRecords.length === 0) {
+        document.getElementById('dns-empty').classList.remove('hidden');
+        tbody.innerHTML = '';
+        return;
+    }
+    
+    document.getElementById('dns-empty').classList.add('hidden');
+    
+    tbody.innerHTML = filteredDNSRecords.map(record => `
+        <tr class="hover:bg-gray-600">
+            <td class="px-4 py-3">
+                <input type="checkbox" class="dns-record-checkbox rounded" value="${record.id}">
+            </td>
+            <td class="px-4 py-3">
+                <div class="flex items-center">
+                    <i class="fas fa-globe text-blue-400 mr-2"></i>
+                    <span class="font-medium">${record.domain}</span>
+                </div>
+            </td>
+            <td class="px-4 py-3">
+                <code class="bg-gray-600 px-2 py-1 rounded text-xs">${record.name}</code>
+            </td>
+            <td class="px-4 py-3">
+                <span class="px-2 py-1 bg-purple-600 bg-opacity-30 text-purple-300 rounded text-xs">
+                    ${record.type}
+                </span>
+            </td>
+            <td class="px-4 py-3">
+                <div class="max-w-48 truncate" title="${record.value}">
+                    <code class="text-xs">${record.value}</code>
+                </div>
+            </td>
+            <td class="px-4 py-3">
+                <span class="text-gray-300">${record.ttl}s</span>
+            </td>
+            <td class="px-4 py-3">
+                <span class="px-2 py-1 text-xs rounded ${getProviderStyle(record.provider)}">
+                    ${getProviderName(record.provider)}
+                </span>
+            </td>
+            <td class="px-4 py-3">
+                <span class="px-2 py-1 text-xs rounded ${getStatusStyle(record.status)}">
+                    <i class="fas ${getStatusIcon(record.status)} mr-1"></i>
+                    ${getStatusText(record.status)}
+                </span>
+            </td>
+            <td class="px-4 py-3">
+                <span class="px-2 py-1 text-xs rounded ${getPropagationStyle(record.propagationStatus)}">
+                    <i class="fas ${getPropagationIcon(record.propagationStatus)} mr-1"></i>
+                    ${getPropagationText(record.propagationStatus)}
+                </span>
+            </td>
+            <td class="px-4 py-3">
+                <div class="flex space-x-2">
+                    <button onclick="editDNSRecord('${record.id}')" 
+                            class="text-blue-400 hover:text-blue-300" title="Düzenle">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="checkDNSPropagation('${record.id}')" 
+                            class="text-green-400 hover:text-green-300" title="Propagation Kontrol">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                    <button onclick="showDNSHealthCheck('${record.domain}')" 
+                            class="text-yellow-400 hover:text-yellow-300" title="Sağlık Kontrolü">
+                        <i class="fas fa-heartbeat"></i>
+                    </button>
+                    <button onclick="deleteDNSRecord('${record.id}')" 
+                            class="text-red-400 hover:text-red-300" title="Sil">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+// DNS Helper Functions
+function getProviderStyle(provider) {
+    const styles = {
+        CLOUDFLARE: 'bg-orange-600 bg-opacity-30 text-orange-300',
+        GODADDY: 'bg-green-600 bg-opacity-30 text-green-300',
+        NAMECHEAP: 'bg-blue-600 bg-opacity-30 text-blue-300',
+        CUSTOM: 'bg-purple-600 bg-opacity-30 text-purple-300'
+    };
+    return styles[provider] || 'bg-gray-600 bg-opacity-30 text-gray-300';
+}
+
+function getProviderName(provider) {
+    const names = {
+        CLOUDFLARE: 'Cloudflare',
+        GODADDY: 'GoDaddy',
+        NAMECHEAP: 'Namecheap',
+        CUSTOM: 'Özel'
+    };
+    return names[provider] || provider;
+}
+
+function getStatusStyle(status) {
+    const styles = {
+        active: 'bg-green-600 bg-opacity-30 text-green-300',
+        pending: 'bg-yellow-600 bg-opacity-30 text-yellow-300',
+        error: 'bg-red-600 bg-opacity-30 text-red-300'
+    };
+    return styles[status] || 'bg-gray-600 bg-opacity-30 text-gray-300';
+}
+
+function getStatusIcon(status) {
+    const icons = {
+        active: 'fa-check-circle',
+        pending: 'fa-hourglass-half',
+        error: 'fa-exclamation-triangle'
+    };
+    return icons[status] || 'fa-question-circle';
+}
+
+function getStatusText(status) {
+    const texts = {
+        active: 'Aktif',
+        pending: 'Beklemede',
+        error: 'Hata'
+    };
+    return texts[status] || status;
+}
+
+function getPropagationStyle(status) {
+    const styles = {
+        propagated: 'bg-green-600 bg-opacity-30 text-green-300',
+        propagating: 'bg-yellow-600 bg-opacity-30 text-yellow-300',
+        pending: 'bg-blue-600 bg-opacity-30 text-blue-300'
+    };
+    return styles[status] || 'bg-gray-600 bg-opacity-30 text-gray-300';
+}
+
+function getPropagationIcon(status) {
+    const icons = {
+        propagated: 'fa-check',
+        propagating: 'fa-spinner fa-spin',
+        pending: 'fa-clock'
+    };
+    return icons[status] || 'fa-question';
+}
+
+function getPropagationText(status) {
+    const texts = {
+        propagated: 'Yayıldı',
+        propagating: 'Yayılıyor',
+        pending: 'Bekliyor'
+    };
+    return texts[status] || status;
+}
+
+// DNS Modal Functions
+function showDNSAddModal() {
+    document.getElementById('dnsAddModal').classList.remove('hidden');
+}
+
+function hideDNSAddModal() {
+    document.getElementById('dnsAddModal').classList.add('hidden');
+    document.getElementById('dnsAddForm').reset();
+}
+
+function showDNSEditModal() {
+    document.getElementById('dnsEditModal').classList.remove('hidden');
+}
+
+function hideDNSEditModal() {
+    document.getElementById('dnsEditModal').classList.add('hidden');
+    document.getElementById('dnsEditForm').reset();
+}
+
+function showDNSHealthModal() {
+    document.getElementById('dnsHealthModal').classList.remove('hidden');
+}
+
+function hideDNSHealthModal() {
+    document.getElementById('dnsHealthModal').classList.add('hidden');
+}
+
+// Update DNS value placeholder based on record type
+function updateDNSValuePlaceholder() {
+    const type = document.getElementById('dns-type').value;
+    const valueInput = document.getElementById('dns-value');
+    const priorityDiv = document.getElementById('dns-priority-div');
+    
+    const placeholders = {
+        A: '192.168.1.1',
+        AAAA: '2001:db8::1',
+        CNAME: 'target.example.com',
+        MX: 'mail.example.com',
+        TXT: '"v=spf1 include:_spf.example.com ~all"',
+        NS: 'ns1.example.com'
+    };
+    
+    valueInput.placeholder = placeholders[type] || 'Değer girin';
+    
+    // Show/hide priority field for MX records
+    if (type === 'MX') {
+        priorityDiv.classList.remove('hidden');
+    } else {
+        priorityDiv.classList.add('hidden');
+    }
+}
+
+function updateEditDNSValuePlaceholder() {
+    const type = document.getElementById('edit-dns-type').value;
+    const valueInput = document.getElementById('edit-dns-value');
+    const priorityDiv = document.getElementById('edit-dns-priority-div');
+    
+    updateDNSValuePlaceholder(); // Use same logic
+    
+    if (type === 'MX') {
+        priorityDiv.classList.remove('hidden');
+    } else {
+        priorityDiv.classList.add('hidden');
+    }
+}
+
+// DNS CRUD Operations
+async function addDNSRecord(formData) {
+    try {
+        const response = await fetch('/api/dns', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + token
+            },
+            body: JSON.stringify(formData)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('DNS kaydı başarıyla eklendi', 'success');
+            hideDNSAddModal();
+            loadDNSRecords();
+        } else {
+            showNotification('DNS kaydı eklenemedi: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('DNS kaydı eklenirken hata oluştu', 'error');
+    }
+}
+
+async function editDNSRecord(id) {
+    const record = dnsRecords.find(r => r.id === id);
+    if (!record) return;
+    
+    // Populate edit form
+    document.getElementById('edit-dns-id').value = record.id;
+    document.getElementById('edit-dns-domain').value = record.domain;
+    document.getElementById('edit-dns-name').value = record.name;
+    document.getElementById('edit-dns-type').value = record.type;
+    document.getElementById('edit-dns-value').value = record.value;
+    document.getElementById('edit-dns-ttl').value = record.ttl;
+    document.getElementById('edit-dns-provider').value = record.provider;
+    
+    if (record.priority) {
+        document.getElementById('edit-dns-priority').value = record.priority;
+    }
+    
+    updateEditDNSValuePlaceholder();
+    showDNSEditModal();
+}
+
+async function updateDNSRecord(id, formData) {
+    try {
+        const response = await fetch(`/api/dns/${id}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + token
+            },
+            body: JSON.stringify(formData)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('DNS kaydı başarıyla güncellendi', 'success');
+            hideDNSEditModal();
+            loadDNSRecords();
+        } else {
+            showNotification('DNS kaydı güncellenemedi: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('DNS kaydı güncellenirken hata oluştu', 'error');
+    }
+}
+
+async function deleteDNSRecord(id) {
+    if (!confirm('Bu DNS kaydını silmek istediğinizden emin misiniz?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/dns/${id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('DNS kaydı başarıyla silindi', 'success');
+            loadDNSRecords();
+        } else {
+            showNotification('DNS kaydı silinemedi: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('DNS kaydı silinirken hata oluştu', 'error');
+    }
+}
+
+async function checkDNSPropagation(id) {
+    try {
+        showNotification('DNS propagation kontrol ediliyor...', 'info');
+        
+        const response = await fetch(`/api/dns/${id}/check-propagation`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            const status = data.propagation.propagated ? 'Yayıldı' : 'Henüz yayılmadı';
+            showNotification(`Propagation durumu: ${status}`, 'success');
+            loadDNSRecords(); // Refresh to show updated status
+        } else {
+            showNotification('Propagation kontrolü başarısız: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Propagation kontrol edilirken hata oluştu', 'error');
+    }
+}
+
+async function showDNSHealthCheck(domain) {
+    try {
+        showNotification('DNS sağlık kontrolü yapılıyor...', 'info');
+        
+        const response = await fetch(`/api/dns/health-check/${domain}`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            renderDNSHealthCheck(data.health, domain);
+            showDNSHealthModal();
+        } else {
+            showNotification('Sağlık kontrolü başarısız: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Sağlık kontrolü sırasında hata oluştu', 'error');
+    }
+}
+
+function renderDNSHealthCheck(health, domain) {
+    const content = document.getElementById('dns-health-content');
+    
+    const statusColor = health.status === 'healthy' ? 'text-green-400' : 
+                       health.status === 'warning' ? 'text-yellow-400' : 'text-red-400';
+    
+    content.innerHTML = `
+        <div class="bg-gray-700 p-4 rounded-lg">
+            <h4 class="font-bold mb-2 flex items-center">
+                <i class="fas fa-globe mr-2 text-blue-400"></i>
+                ${domain}
+            </h4>
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <span class="text-gray-400">Durum:</span>
+                    <span class="${statusColor} font-semibold ml-2">
+                        <i class="fas ${health.status === 'healthy' ? 'fa-check-circle' : 
+                                      health.status === 'warning' ? 'fa-exclamation-triangle' : 'fa-times-circle'} mr-1"></i>
+                        ${health.status === 'healthy' ? 'Sağlıklı' : 
+                          health.status === 'warning' ? 'Uyarı' : 'Hata'}
+                    </span>
+                </div>
+                <div>
+                    <span class="text-gray-400">Puan:</span>
+                    <span class="text-white font-semibold ml-2">${health.score}/100</span>
+                </div>
+            </div>
+            
+            ${health.issues.length > 0 ? `
+                <div class="mt-4">
+                    <h5 class="font-medium text-red-400 mb-2">Tespit Edilen Sorunlar:</h5>
+                    <ul class="list-disc list-inside space-y-1 text-sm text-gray-300">
+                        ${health.issues.map(issue => `<li>${issue}</li>`).join('')}
+                    </ul>
+                </div>
+            ` : ''}
+        </div>
+    `;
+}
+
+// DNS Filter Functions
+function filterDNSRecords() {
+    const domainFilter = document.getElementById('dns-domain-filter').value.toLowerCase();
+    const typeFilter = document.getElementById('dns-type-filter').value;
+    const statusFilter = document.getElementById('dns-status-filter').value;
+    const providerFilter = document.getElementById('dns-provider-filter').value;
+    
+    filteredDNSRecords = dnsRecords.filter(record => {
+        const matchesDomain = !domainFilter || record.domain.toLowerCase().includes(domainFilter);
+        const matchesType = !typeFilter || record.type === typeFilter;
+        const matchesStatus = !statusFilter || record.status === statusFilter;
+        const matchesProvider = !providerFilter || record.provider === providerFilter;
+        
+        return matchesDomain && matchesType && matchesStatus && matchesProvider;
+    });
+    
+    renderDNSRecords();
+}
+
+// Refresh DNS records
+function refreshDNSRecords() {
+    loadDNSRecords();
+}
+
+// Bulk operations placeholder
+function bulkDNSOperations() {
+    showNotification('Toplu işlemler yakında eklenecek', 'info');
+}
+
+// Form event listeners
+document.addEventListener('DOMContentLoaded', function() {
+    // DNS Add Form
+    document.getElementById('dnsAddForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const formData = {
+            domain: document.getElementById('dns-domain').value,
+            name: document.getElementById('dns-name').value,
+            type: document.getElementById('dns-type').value,
+            value: document.getElementById('dns-value').value,
+            ttl: parseInt(document.getElementById('dns-ttl').value),
+            provider: document.getElementById('dns-provider').value
+        };
+        
+        if (formData.type === 'MX') {
+            formData.priority = parseInt(document.getElementById('dns-priority').value);
+        }
+        
+        addDNSRecord(formData);
+    });
+    
+    // DNS Edit Form
+    document.getElementById('dnsEditForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const id = document.getElementById('edit-dns-id').value;
+        const formData = {
+            domain: document.getElementById('edit-dns-domain').value,
+            name: document.getElementById('edit-dns-name').value,
+            type: document.getElementById('edit-dns-type').value,
+            value: document.getElementById('edit-dns-value').value,
+            ttl: parseInt(document.getElementById('edit-dns-ttl').value),
+            provider: document.getElementById('edit-dns-provider').value
+        };
+        
+        if (formData.type === 'MX') {
+            formData.priority = parseInt(document.getElementById('edit-dns-priority').value);
+        }
+        
+        updateDNSRecord(id, formData);
+    });
+    
+    // DNS Filters
+    document.getElementById('dns-domain-filter').addEventListener('input', filterDNSRecords);
+    document.getElementById('dns-type-filter').addEventListener('change', filterDNSRecords);
+    document.getElementById('dns-status-filter').addEventListener('change', filterDNSRecords);
+    document.getElementById('dns-provider-filter').addEventListener('change', filterDNSRecords);
+});
+
 // Check authentication
 const token = localStorage.getItem('authToken');
 if (!token) {
@@ -53,6 +1062,8 @@ function showSection(sectionName) {
     // Load section content
     if (sectionName === 'domains') {
         loadDomains();
+    } else if (sectionName === 'dns') {
+        loadDNSRecords();
     } else if (sectionName === 'nginx') {
         loadNginxSection();
     }
@@ -304,6 +1315,49 @@ window.deleteDomain = async function(id) {
 window.logout = function() {
     localStorage.removeItem('authToken');
     window.location.href = '/';
+}
+
+// Notification system
+function showNotification(message, type = 'info') {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = `fixed top-4 right-4 px-4 py-3 rounded-lg shadow-lg z-50 ${getNotificationStyle(type)}`;
+    notification.innerHTML = `
+        <div class="flex items-center">
+            <i class="fas ${getNotificationIcon(type)} mr-2"></i>
+            <span>${message}</span>
+        </div>
+    `;
+    
+    // Add to DOM
+    document.body.appendChild(notification);
+    
+    // Auto remove after 5 seconds
+    setTimeout(() => {
+        if (notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+        }
+    }, 5000);
+}
+
+function getNotificationStyle(type) {
+    const styles = {
+        success: 'bg-green-600 text-white',
+        error: 'bg-red-600 text-white',
+        warning: 'bg-yellow-600 text-black',
+        info: 'bg-blue-600 text-white'
+    };
+    return styles[type] || styles.info;
+}
+
+function getNotificationIcon(type) {
+    const icons = {
+        success: 'fa-check-circle',
+        error: 'fa-exclamation-circle',
+        warning: 'fa-exclamation-triangle',
+        info: 'fa-info-circle'
+    };
+    return icons[type] || icons.info;
 }
 
 // NGINX Functions
@@ -589,6 +1643,55 @@ window.checkDNS = async function() {
             `<div class="bg-red-100 p-4 rounded mt-4 text-red-600">❌ DNS check failed: ${error.message}</div>`;
     }
 }
+
+// Advanced DNS Section Management
+function showAdvancedDNSSection(sectionName) {
+    // Hide all advanced DNS sections
+    document.querySelectorAll('.advanced-dns-section').forEach(section => {
+        section.classList.add('hidden');
+    });
+    
+    // Remove active class from all advanced DNS tabs
+    document.querySelectorAll('.advanced-dns-tab').forEach(tab => {
+        tab.classList.remove('bg-purple-600');
+        tab.classList.add('bg-gray-600');
+    });
+    
+    // Show selected section
+    const targetSection = document.getElementById('advanced-dns-' + sectionName);
+    if (targetSection) {
+        targetSection.classList.remove('hidden');
+    }
+    
+    // Set active tab
+    const activeTab = event.target.closest('.advanced-dns-tab');
+    if (activeTab) {
+        activeTab.classList.remove('bg-gray-600');
+        activeTab.classList.add('bg-purple-600');
+    }
+    
+    // Load section data
+    switch(sectionName) {
+        case 'geodns':
+            // Already has test function
+            break;
+        case 'health':
+            // Already has test function
+            break;
+        case 'security':
+            // Already has test functions
+            break;
+        case 'loadbalancing':
+            loadLoadBalancingInfo();
+            break;
+        case 'cache':
+            loadCacheStatistics();
+            break;
+    }
+}
+
+// Make function globally accessible
+window.showAdvancedDNSSection = showAdvancedDNSSection;
 
 // Initialize - show domains section by default
 document.addEventListener('DOMContentLoaded', function() {
