@@ -702,157 +702,359 @@ const initializeDNSRecords = () => {
 
 initializeDNSRecords()
 
-// NGINX Config Generator
-function generateNginxConfig(options) {
-  const { domains, backends } = options
+// Advanced NGINX Config Generator
+function generateAdvancedNginxConfig(options) {
+  const { domains, globalBackends, domainConfigs, globalSettings } = options
   
-  let config = `# Auto-generated NGINX Configuration
+  let config = `# Advanced Multi-Domain NGINX Configuration
 # Generated at: ${new Date().toISOString()}
-# Traffic Management Platform
+# Traffic Management Platform - ${domains.length} Domains Configured
+# 
+# Features:
+# - Per-domain backend configuration
+# - Advanced bot detection with ML-style patterns
+# - Geographic routing support
+# - Real-time traffic analytics
+# - Fallback and health check support
 
-# Upstream definitions
-upstream clean_backend {
-    server ${backends.clean.replace(/^https?:\/\//, '')};
-}
+# Rate limiting zones
+limit_req_zone $binary_remote_addr zone=general:10m rate=10r/s;
+limit_req_zone $binary_remote_addr zone=bots:10m rate=1r/s;
 
-upstream gray_backend {
-    server ${backends.gray.replace(/^https?:\/\//, '')};
-}
+# GeoIP configuration (if available)
+# geoip_country /usr/share/GeoIP/GeoIP.dat;
 
-upstream aggressive_backend {
-    server ${backends.aggressive.replace(/^https?:\/\//, '')};
-}
-
-# Lua shared dictionary for bot detection
+# Lua shared dictionaries
 lua_shared_dict bot_detection 10m;
+lua_shared_dict domain_stats 10m;
+lua_shared_dict rate_limiting 10m;
 
-# Main server block with Lua logic
-server {
-    listen 80;
-    
-    # Bot detection using Lua
-    access_by_lua_block {
-        local user_agent = ngx.var.http_user_agent or ""
-        local host = ngx.var.host or ""
-        
-        -- Simple bot detection
-        local bot_patterns = {
-            "facebook", "facebookexternalhit", "bot", "crawler", 
-            "spider", "scraper", "googlebot", "bingbot"
-        }
-        
-        local is_bot = false
-        for _, pattern in ipairs(bot_patterns) do
-            if string.find(string.lower(user_agent), pattern) then
-                is_bot = true
-                break
-            end
-        end
-        
-        -- Dynamic backend selection based on traffic analysis
-        local backend = "aggressive_backend"  -- default for human traffic
-        
-        -- Check if domain is in our managed list
-        local managed_domains = {`
+# Log format for analytics
+log_format traffic_analytics '$remote_addr - $remote_user [$time_local] '
+                           '"$request" $status $body_bytes_sent '
+                           '"$http_referer" "$http_user_agent" '
+                           '"$host" "$upstream_addr" "$request_time" '
+                           '"$bot_detected" "$backend_used" "$geo_country"';
 
-  // Add all domains to managed list
+`
+
+  // Generate upstream definitions for each domain
   domains.forEach(domain => {
-    config += `"${domain.name}", `
+    const domainConfig = domainConfigs[domain.id] || getDomainBackendConfig(domain.id)
+    
+    config += `
+# Upstream definitions for ${domain.name}
+upstream ${domain.name.replace(/[^a-zA-Z0-9]/g, '_')}_clean {
+    server ${domainConfig.cleanBackend.replace(/^https?:\/\//, '')};
+    # Health check and backup servers can be added here
+}
+
+upstream ${domain.name.replace(/[^a-zA-Z0-9]/g, '_')}_gray {
+    server ${domainConfig.grayBackend.replace(/^https?:\/\//, '')};
+}
+
+upstream ${domain.name.replace(/[^a-zA-Z0-9]/g, '_')}_aggressive {
+    server ${domainConfig.aggressiveBackend.replace(/^https?:\/\//, '')};
+}
+`
   })
 
-  config += `}
+  // Generate main server block with advanced Lua logic
+  config += `
+# Main server block with multi-domain routing
+server {
+    listen 80;
+    listen [::]:80;
+    
+    # Enable real IP from Cloudflare
+    set_real_ip_from 103.21.244.0/22;
+    set_real_ip_from 103.22.200.0/22;
+    set_real_ip_from 103.31.4.0/22;
+    real_ip_header CF-Connecting-IP;
+    
+    # Variables for dynamic routing
+    set $bot_detected "false";
+    set $backend_used "unknown";
+    set $geo_country "unknown";
+    
+    # Advanced traffic analysis and routing
+    access_by_lua_block {
+        local json = require "cjson"
+        local http = require "resty.http"
         
-        local domain_found = false
-        for _, managed_domain in ipairs(managed_domains) do
-            if host == managed_domain then
-                domain_found = true
+        -- Get request data
+        local user_agent = ngx.var.http_user_agent or ""
+        local host = ngx.var.host or ""
+        local remote_addr = ngx.var.remote_addr or ""
+        local referer = ngx.var.http_referer or ""
+        local request_uri = ngx.var.request_uri or ""
+        
+        -- Domain configuration mapping
+        local domain_configs = {`
+
+  // Generate domain configuration mapping
+  domains.forEach(domain => {
+    const domainConfig = domainConfigs[domain.id] || getDomainBackendConfig(domain.id)
+    const cleanName = domain.name.replace(/[^a-zA-Z0-9]/g, '_')
+    
+    config += `
+            ["${domain.name}"] = {
+                clean_upstream = "${cleanName}_clean",
+                gray_upstream = "${cleanName}_gray",
+                aggressive_upstream = "${cleanName}_aggressive",
+                routing_mode = "${domainConfig.routingMode}",
+                bot_detection = ${domainConfig.botDetection},
+                geo_routing = ${domainConfig.geoRouting}
+            },`
+  })
+
+  config += `
+        }
+        
+        -- Check if domain is managed
+        local domain_config = domain_configs[host]
+        if not domain_config then
+            ngx.log(ngx.ERR, "Unmanaged domain: " .. host)
+            return ngx.exit(404)
+        end
+        
+        -- Enhanced bot detection patterns
+        local bot_patterns = {
+            -- Social media crawlers
+            "facebookexternalhit", "facebot", "facebook", "twitterbot", "linkedinbot",
+            "whatsapp", "telegram", "instagram", "snapchat",
+            
+            -- Search engine bots
+            "googlebot", "bingbot", "slurp", "duckduckbot", "baiduspider", "yandexbot",
+            
+            -- Generic bots and crawlers
+            "bot", "crawler", "spider", "scraper", "parser", "fetcher", "checker",
+            "monitor", "uptime", "scanner", "validator", "analyzer",
+            
+            -- Headless browsers and automation
+            "headless", "phantom", "selenium", "webdriver", "puppeteer", "playwright",
+            
+            -- Security and analysis tools
+            "curl", "wget", "http", "python", "go%-http", "java", "ruby", "perl"
+        }
+        
+        -- Advanced bot detection
+        local is_bot = false
+        local bot_score = 0
+        
+        -- Check user agent patterns
+        local lower_ua = string.lower(user_agent)
+        for _, pattern in ipairs(bot_patterns) do
+            if string.find(lower_ua, pattern) then
+                is_bot = true
+                bot_score = bot_score + 10
                 break
             end
         end
         
-        -- Only apply routing for managed domains
-        if domain_found then
-            if is_bot then
-                -- Facebook bots, crawlers → Clean content
-                backend = "clean_backend"
+        -- Additional bot indicators
+        if user_agent == "" or user_agent == "-" then
+            bot_score = bot_score + 8  -- No user agent
+        end
+        
+        if not string.find(lower_ua, "mozilla") and not is_bot then
+            bot_score = bot_score + 5  -- Suspicious UA structure
+        end
+        
+        -- Check for automation indicators
+        if string.find(request_uri, "wp%-admin") or 
+           string.find(request_uri, "%.php") or
+           string.find(request_uri, "/admin") then
+            bot_score = bot_score + 3  -- Automated scanning
+        end
+        
+        -- Referrer analysis
+        local facebook_referrer = false
+        local social_referrer = false
+        
+        if referer ~= "" then
+            local lower_ref = string.lower(referer)
+            if string.find(lower_ref, "facebook") or string.find(lower_ref, "fb%.") then
+                facebook_referrer = true
+                social_referrer = true
+            elseif string.find(lower_ref, "twitter") or string.find(lower_ref, "instagram") or 
+                   string.find(lower_ref, "linkedin") or string.find(lower_ref, "tiktok") then
+                social_referrer = true
+            end
+        end
+        
+        -- Geographic detection (mock implementation)
+        local geo_country = "US"  -- Default, in production use real GeoIP
+        -- ngx.var.geo_country = ngx.var.geoip_country_code or "US"
+        
+        -- Dynamic backend selection based on analysis
+        local selected_upstream
+        local routing_decision = "default"
+        
+        if domain_config.routing_mode == "smart" then
+            if is_bot or bot_score >= 8 then
+                -- Bots get clean content
+                selected_upstream = domain_config.clean_upstream
+                routing_decision = "bot_detected"
+                ngx.var.bot_detected = "true"
+            elseif facebook_referrer then
+                -- Facebook traffic gets aggressive content
+                selected_upstream = domain_config.aggressive_upstream
+                routing_decision = "facebook_referrer"
+            elseif social_referrer then
+                -- Other social media gets gray content
+                selected_upstream = domain_config.gray_upstream
+                routing_decision = "social_referrer"
             else
-                -- Advanced analysis for human traffic
-                local referrer = ngx.var.http_referer or ""
-                local facebook_ref = string.find(string.lower(referrer), "facebook")
-                
-                if facebook_ref then
-                    -- Facebook referrer + human → Aggressive content
-                    backend = "aggressive_backend"
+                -- Direct traffic analysis
+                if referer == "" then
+                    -- Direct traffic - potentially suspicious
+                    selected_upstream = domain_config.gray_upstream
+                    routing_decision = "direct_traffic"
                 else
-                    -- No Facebook referrer → Suspicious, use Gray content
-                    backend = "gray_backend"
+                    -- Organic traffic gets aggressive content
+                    selected_upstream = domain_config.aggressive_upstream
+                    routing_decision = "organic_traffic"
                 end
             end
+        elseif domain_config.routing_mode == "aggressive" then
+            -- Aggressive mode - mostly aggressive content
+            if is_bot then
+                selected_upstream = domain_config.clean_upstream
+                routing_decision = "aggressive_mode_bot"
+            else
+                selected_upstream = domain_config.aggressive_upstream
+                routing_decision = "aggressive_mode_human"
+            end
+        elseif domain_config.routing_mode == "defensive" then
+            -- Defensive mode - mostly clean content
+            if facebook_referrer and not is_bot then
+                selected_upstream = domain_config.gray_upstream
+                routing_decision = "defensive_mode_facebook"
+            else
+                selected_upstream = domain_config.clean_upstream
+                routing_decision = "defensive_mode_default"
+            end
         else
-            -- Unknown domain, default behavior
-            return ngx.exit(404)
-        end`
-  
-  config += `        end
+            -- Default fallback
+            selected_upstream = domain_config.clean_upstream
+            routing_decision = "fallback"
+        end
         
-        -- Set the upstream backend
-        ngx.var.backend = backend
+        -- Set variables for logging and upstream selection
+        ngx.var.backend_used = selected_upstream
+        ngx.var.upstream_backend = selected_upstream
         
-        -- Log traffic to our API (async)
-        local traffic_data = {
+        -- Log traffic for analytics (async)
+        local analytics_data = {
             domain = host,
-            userType = is_bot and "bot" or "human",
-            backendUsed = string.gsub(backend, "_backend", ""),
-            userAgent = user_agent,
-            referrer = referrer,
-            ip = ngx.var.remote_addr,
-            blocked = false
+            user_agent = user_agent,
+            referer = referer,
+            remote_addr = remote_addr,
+            is_bot = is_bot,
+            bot_score = bot_score,
+            backend_used = selected_upstream,
+            routing_decision = routing_decision,
+            facebook_referrer = facebook_referrer,
+            timestamp = ngx.time()
         }
         
-        -- Async HTTP call to log traffic (non-blocking)
-        ngx.timer.at(0, function()
-            local httpc = require "resty.http".new()
-            httpc:request_uri("http://localhost:3000/api/traffic/log", {
-                method = "POST",
-                body = require "cjson".encode(traffic_data),
-                headers = {["Content-Type"] = "application/json"}
-            })
-        end)
+        -- Store analytics (in production, send to analytics API)
+        ngx.shared.domain_stats:set(host .. "_" .. ngx.time(), json.encode(analytics_data), 3600)
+        
+        -- Rate limiting based on bot detection
+        if is_bot then
+            ngx.var.rate_limit_zone = "bots"
+        else
+            ngx.var.rate_limit_zone = "general" 
+        end
     }
     
-    # Proxy to selected backend
+    # Apply rate limiting
+    limit_req zone=general burst=20 nodelay;
+    
+    # Set upstream backend variable
+    set $upstream_backend "default_clean";
+    
+    # Proxy configuration
     location / {
-        proxy_pass http://$backend;
+        # Health check for upstream
+        proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+        
+        # Proxy headers
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Bot-Detected $bot_detected;
+        proxy_set_header X-Backend-Used $backend_used;
         
-        # Add custom headers for debugging
-        add_header X-Backend-Used $backend;
-        add_header X-Traffic-Management "Active";
+        # Timeout settings
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 30s;
         
-        # Log response status for monitoring
-        log_by_lua_block {
-            if ngx.status >= 400 then
-                -- Log errors for monitoring
-                ngx.log(ngx.ERR, "Backend error: " .. ngx.status .. " for " .. ngx.var.host)
+        # Pass to selected backend
+        proxy_pass http://$upstream_backend;
+        
+        # Enable buffering for better performance
+        proxy_buffering on;
+        proxy_buffer_size 4k;
+        proxy_buffers 8 4k;
+        
+        # Access logging with analytics
+        access_log /var/log/nginx/traffic_analytics.log traffic_analytics;
+    }
+    
+    # Health check endpoint
+    location /nginx-health {
+        access_log off;
+        return 200 "OK";
+        add_header Content-Type text/plain;
+    }
+    
+    # Analytics endpoint for real-time stats
+    location /nginx-stats {
+        access_log off;
+        allow 127.0.0.1;
+        deny all;
+        
+        content_by_lua_block {
+            local json = require "cjson"
+            local stats = {}
+            
+            -- Get stored analytics data
+            local keys = ngx.shared.domain_stats:get_keys(100)
+            for _, key in ipairs(keys) do
+                local data = ngx.shared.domain_stats:get(key)
+                if data then
+                    table.insert(stats, json.decode(data))
+                end
             end
+            
+            ngx.header.content_type = "application/json"
+            ngx.say(json.encode({
+                success = true,
+                stats = stats,
+                total_entries = #stats,
+                generated_at = ngx.time()
+            }))
         }
     }
 }
 
-# Statistics and monitoring
-server {
-    listen 8080;
-    server_name localhost;
-    
-    location /nginx-status {
-        stub_status on;
-        access_log off;
-        allow 127.0.0.1;
-        deny all;
-    }
+# Error pages
+error_page 404 /404.html;
+error_page 500 502 503 504 /50x.html;
+
+location = /404.html {
+    root /usr/share/nginx/html;
+    internal;
+}
+
+location = /50x.html {
+    root /usr/share/nginx/html;
+    internal;
 }
 `
 
@@ -1033,23 +1235,149 @@ app.post('/api/domains/:id/check', requireAuth, async (c) => {
   return c.json({ success: true, domain: updatedDomain })
 })
 
-// NGINX Configuration API
+// Domain Backend Configuration Storage
+const domainBackendConfigs = new Map()
+
+// Initialize or get domain backend configuration
+const getDomainBackendConfig = (domainId) => {
+  if (!domainBackendConfigs.has(domainId)) {
+    domainBackendConfigs.set(domainId, {
+      cleanBackend: 'clean-server.example.com:80',
+      grayBackend: 'gray-server.example.com:80', 
+      aggressiveBackend: 'aggressive-server.example.com:80',
+      routingMode: 'smart', // 'smart', 'aggressive', 'defensive'
+      botDetection: true,
+      geoRouting: false,
+      customRules: []
+    })
+  }
+  return domainBackendConfigs.get(domainId)
+}
+
+// NGINX Configuration APIs
 app.post('/api/nginx/generate-config', requireAuth, async (c) => {
-  const { cleanBackend, grayBackend, aggressiveBackend } = await c.req.json()
-  
-  const domainList = Array.from(domains.values())
-  
-  // Generate NGINX config for dynamic routing
-  const config = generateNginxConfig({
-    domains: domainList,
-    backends: {
-      clean: cleanBackend,
-      gray: grayBackend,
-      aggressive: aggressiveBackend
+  try {
+    const requestBody = await c.req.json()
+    const { 
+      globalBackends = {},
+      domainSpecificConfigs = {},
+      globalSettings = {}
+    } = requestBody
+    
+    const domainList = Array.from(domains.values())
+    
+    // Generate comprehensive NGINX config
+    const config = generateAdvancedNginxConfig({
+      domains: domainList,
+      globalBackends,
+      domainConfigs: domainSpecificConfigs,
+      globalSettings
+    })
+    
+    return c.json({ 
+      success: true, 
+      config,
+      domainCount: domainList.length,
+      generatedAt: new Date().toISOString()
+    })
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'Config generation failed: ' + error.message
+    }, 500)
+  }
+})
+
+// Get domain-specific backend configuration
+app.get('/api/nginx/domain-config/:domainId', requireAuth, (c) => {
+  try {
+    const domainId = c.req.param('domainId')
+    const domain = domains.get(domainId)
+    
+    if (!domain) {
+      return c.json({
+        success: false,
+        message: 'Domain bulunamadı'
+      }, 404)
     }
-  })
-  
-  return c.json({ success: true, config })
+    
+    const config = getDomainBackendConfig(domainId)
+    
+    return c.json({
+      success: true,
+      domain: domain,
+      config: config
+    })
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'Config alınamadı: ' + error.message
+    }, 500)
+  }
+})
+
+// Update domain-specific backend configuration
+app.post('/api/nginx/domain-config/:domainId', requireAuth, async (c) => {
+  try {
+    const domainId = c.req.param('domainId')
+    const domain = domains.get(domainId)
+    
+    if (!domain) {
+      return c.json({
+        success: false,
+        message: 'Domain bulunamadı'
+      }, 404)
+    }
+    
+    const updateData = await c.req.json()
+    const currentConfig = getDomainBackendConfig(domainId)
+    
+    // Update configuration
+    const newConfig = {
+      ...currentConfig,
+      ...updateData,
+      updatedAt: new Date().toISOString()
+    }
+    
+    domainBackendConfigs.set(domainId, newConfig)
+    
+    return c.json({
+      success: true,
+      message: 'Domain backend config güncellendi',
+      config: newConfig
+    })
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'Config güncellenemedi: ' + error.message
+    }, 500)
+  }
+})
+
+// Get all domain configurations for NGINX
+app.get('/api/nginx/all-domain-configs', requireAuth, (c) => {
+  try {
+    const domainList = Array.from(domains.values())
+    const configs = {}
+    
+    domainList.forEach(domain => {
+      configs[domain.id] = {
+        domain: domain,
+        config: getDomainBackendConfig(domain.id)
+      }
+    })
+    
+    return c.json({
+      success: true,
+      domains: configs,
+      totalDomains: domainList.length
+    })
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'Configs alınamadı: ' + error.message
+    }, 500)
+  }
 })
 
 app.post('/api/nginx/apply-config', requireAuth, async (c) => {
@@ -2071,103 +2399,209 @@ app.get('/dashboard', (c) => {
                 </div>
             </div>
 
-            <!-- NGINX Section -->
+            <!-- NGINX Multi-Domain Configuration Section -->
             <div id="section-nginx" class="section hidden">
                 <div class="bg-gray-800 rounded-lg p-6">
-                    <h2 class="text-2xl font-bold mb-6">
-                        <i class="fas fa-server mr-2 text-purple-400"></i>
-                        NGINX Konfigürasyonu
-                    </h2>
-                    
-                    <!-- Backend Servers -->
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">
+                            <i class="fas fa-server mr-2 text-purple-400"></i>
+                            NGINX Multi-Domain Konfigürasyonu
+                        </h2>
+                        <div class="flex space-x-3">
+                            <button onclick="refreshDomainConfigs()" 
+                                    class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">
+                                <i class="fas fa-sync-alt mr-2"></i>Yenile
+                            </button>
+                            <button onclick="generateAdvancedNginxConfig()" 
+                                    class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg font-medium">
+                                <i class="fas fa-magic mr-2"></i>Config Oluştur
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Overview Stats -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-gray-300 text-sm">Toplam Domain</p>
+                                    <p class="text-2xl font-bold text-purple-400" id="nginx-total-domains">0</p>
+                                </div>
+                                <div class="bg-purple-500 bg-opacity-20 p-3 rounded-full">
+                                    <i class="fas fa-globe text-purple-400"></i>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-gray-300 text-sm">Aktif Config</p>
+                                    <p class="text-2xl font-bold text-green-400" id="nginx-active-configs">0</p>
+                                </div>
+                                <div class="bg-green-500 bg-opacity-20 p-3 rounded-full">
+                                    <i class="fas fa-check-circle text-green-400"></i>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-gray-300 text-sm">Backend Servers</p>
+                                    <p class="text-2xl font-bold text-blue-400" id="nginx-backend-count">0</p>
+                                </div>
+                                <div class="bg-blue-500 bg-opacity-20 p-3 rounded-full">
+                                    <i class="fas fa-server text-blue-400"></i>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-gray-300 text-sm">Config Size</p>
+                                    <p class="text-2xl font-bold text-orange-400" id="nginx-config-size">0 KB</p>
+                                </div>
+                                <div class="bg-orange-500 bg-opacity-20 p-3 rounded-full">
+                                    <i class="fas fa-file-code text-orange-400"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Domain Configuration Management -->
+                    <div class="bg-gray-700 p-4 rounded-lg mb-6">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-semibold flex items-center">
+                                <i class="fas fa-cog mr-2 text-yellow-400"></i>
+                                Domain Backend Konfigürasyonları
+                            </h3>
+                            <button onclick="addNewDomainConfig()" 
+                                    class="bg-purple-600 hover:bg-purple-700 px-3 py-1 rounded text-sm">
+                                <i class="fas fa-plus mr-1"></i>Yeni Config
+                            </button>
+                        </div>
+                        
+                        <div id="domain-configs-container" class="space-y-4">
+                            <!-- Domain configurations will be loaded here -->
+                            <div class="text-center py-8 text-gray-400">
+                                <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                                <p>Domain konfigürasyonları yükleniyor...</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Global Settings -->
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
                         <div class="bg-gray-700 p-4 rounded-lg">
                             <h3 class="text-lg font-semibold mb-4 flex items-center">
-                                <i class="fas fa-server mr-2 text-green-400"></i>
-                                Backend Sunucular
+                                <i class="fas fa-globe mr-2 text-cyan-400"></i>
+                                Global Settings
                             </h3>
                             <div class="space-y-3">
                                 <div>
-                                    <label class="block text-sm font-medium mb-1">Clean Backend</label>
-                                    <input type="text" id="cleanBackend" 
+                                    <label class="block text-sm font-medium mb-1">Rate Limiting (req/sec)</label>
+                                    <input type="number" id="global-rate-limit" 
                                            class="w-full p-2 bg-gray-600 border border-gray-500 rounded"
-                                           placeholder="207.180.204.60:8081 veya http://clean-server:8080" 
-                                           value="207.180.204.60:8081">
+                                           value="10" min="1" max="100">
                                 </div>
                                 <div>
-                                    <label class="block text-sm font-medium mb-1">Gray Backend</label>
-                                    <input type="text" id="grayBackend"
+                                    <label class="block text-sm font-medium mb-1">Bot Rate Limit (req/sec)</label>
+                                    <input type="number" id="bot-rate-limit" 
                                            class="w-full p-2 bg-gray-600 border border-gray-500 rounded"
-                                           placeholder="207.180.204.60:8082 veya http://gray-server:8080"
-                                           value="207.180.204.60:8082">
+                                           value="1" min="1" max="10">
                                 </div>
-                                <div>
-                                    <label class="block text-sm font-medium mb-1">Aggressive Backend</label>
-                                    <input type="text" id="aggressiveBackend"
-                                           class="w-full p-2 bg-gray-600 border border-gray-500 rounded"
-                                           placeholder="207.180.204.60:8083 veya http://aggressive-server:8080"
-                                           value="207.180.204.60:8083">
+                                <div class="flex items-center space-x-2">
+                                    <input type="checkbox" id="enable-geoip" class="rounded">
+                                    <label for="enable-geoip" class="text-sm">Enable GeoIP Detection</label>
+                                </div>
+                                <div class="flex items-center space-x-2">
+                                    <input type="checkbox" id="enable-analytics" class="rounded" checked>
+                                    <label for="enable-analytics" class="text-sm">Enable Traffic Analytics</label>
                                 </div>
                             </div>
                         </div>
                         
                         <div class="bg-gray-700 p-4 rounded-lg">
                             <h3 class="text-lg font-semibold mb-4 flex items-center">
-                                <i class="fas fa-cogs mr-2 text-blue-400"></i>
-                                Config Status
+                                <i class="fas fa-shield-alt mr-2 text-red-400"></i>
+                                Security Settings
                             </h3>
-                            <div class="space-y-2 text-sm">
-                                <div class="flex justify-between">
-                                    <span>Total Domains:</span>
-                                    <span id="totalDomains">0</span>
+                            <div class="space-y-3">
+                                <div class="flex items-center space-x-2">
+                                    <input type="checkbox" id="enable-bot-protection" class="rounded" checked>
+                                    <label for="enable-bot-protection" class="text-sm">Advanced Bot Protection</label>
                                 </div>
-                                <div class="flex justify-between">
-                                    <span>Active Status:</span>
-                                    <span id="cleanDomains" class="text-green-400">0 Active</span>
+                                <div class="flex items-center space-x-2">
+                                    <input type="checkbox" id="enable-ddos-protection" class="rounded" checked>
+                                    <label for="enable-ddos-protection" class="text-sm">DDoS Protection</label>
                                 </div>
-                                <div class="flex justify-between">
-                                    <span>Connected:</span>
-                                    <span id="grayDomains" class="text-yellow-400">0 Connected</span>
+                                <div class="flex items-center space-x-2">
+                                    <input type="checkbox" id="enable-referrer-check" class="rounded" checked>
+                                    <label for="enable-referrer-check" class="text-sm">Facebook Referrer Detection</label>
                                 </div>
-                                <div class="flex justify-between">
-                                    <span>Total Traffic:</span>
-                                    <span id="aggressiveDomains" class="text-blue-400">0 Traffic</span>
-                                </div>
-                                <div class="flex justify-between">
-                                    <span>Blocked Requests:</span>
-                                    <span id="honeypotDomains" class="text-red-400">0 Blocked</span>
+                                <div class="flex items-center space-x-2">
+                                    <input type="checkbox" id="block-suspicious" class="rounded">
+                                    <label for="block-suspicious" class="text-sm">Block Suspicious Traffic</label>
                                 </div>
                             </div>
                         </div>
                     </div>
                     
-                    <!-- Config Preview -->
+                    <!-- Config Preview and Actions -->
                     <div class="bg-gray-700 p-4 rounded-lg mb-4">
                         <div class="flex justify-between items-center mb-4">
                             <h3 class="text-lg font-semibold flex items-center">
                                 <i class="fas fa-eye mr-2 text-cyan-400"></i>
-                                Config Preview
+                                Generated NGINX Configuration
                             </h3>
+                            <div class="flex space-x-2">
+                                <button onclick="copyConfigToClipboard()" 
+                                        class="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded text-sm">
+                                    <i class="fas fa-copy mr-1"></i>Copy
+                                </button>
+                                <button onclick="downloadAdvancedConfig()" 
+                                        class="bg-green-600 hover:bg-green-700 px-3 py-1 rounded text-sm">
+                                    <i class="fas fa-download mr-1"></i>Download
+                                </button>
+                            </div>
                         </div>
-                        <div class="bg-black p-4 rounded border font-mono text-sm overflow-auto max-h-96">
-                            <pre id="nginxConfigPreview" class="text-green-400">
-# NGINX Config will be generated here
-# Click 'Generate' to create configuration
+                        <div class="bg-black p-4 rounded border font-mono text-xs overflow-auto max-h-96">
+                            <pre id="advanced-nginx-config-preview" class="text-green-400 whitespace-pre-wrap">
+# Multi-Domain NGINX Configuration
+# Generated configuration will appear here after clicking "Config Oluştur"
+# 
+# Features:
+# - Per-domain backend routing
+# - Advanced bot detection with Lua
+# - Rate limiting and DDoS protection
+# - Traffic analytics and monitoring
+# - Facebook referrer detection
+# - Geographic routing support
+# 
+# Click "Config Oluştur" to generate configuration for all domains
                             </pre>
                         </div>
                     </div>
                     
-                    <!-- Actions -->
-                    <div class="flex space-x-4">
-                        <button onclick="generateNginxConfig()" 
+                    <!-- Deploy Actions -->
+                    <div class="flex flex-wrap gap-4">
+                        <button onclick="generateAdvancedNginxConfig()" 
                                 class="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-medium">
-                            <i class="fas fa-magic mr-2"></i>Generate Config
+                            <i class="fas fa-magic mr-2"></i>Config Oluştur
                         </button>
-                        <button onclick="downloadConfig()" 
+                        <button onclick="validateNginxConfig()" 
+                                class="bg-yellow-600 hover:bg-yellow-700 px-6 py-3 rounded-lg font-medium">
+                            <i class="fas fa-check-circle mr-2"></i>Config Doğrula
+                        </button>
+                        <button onclick="deployNginxConfig()" 
+                                class="bg-red-600 hover:bg-red-700 px-6 py-3 rounded-lg font-medium">
+                            <i class="fas fa-rocket mr-2"></i>Deploy Config
+                        </button>
+                        <button onclick="testNginxConfig()" 
                                 class="bg-green-600 hover:bg-green-700 px-6 py-3 rounded-lg font-medium">
-                            <i class="fas fa-download mr-2"></i>Download
-                        </button>
-                        <button onclick="applyConfig()" 
+                            <i class="fas fa-vial mr-2"></i>Test Config</button>
                                 class="bg-yellow-600 hover:bg-yellow-700 px-6 py-3 rounded-lg font-medium">
                             <i class="fas fa-rocket mr-2"></i>Deploy
                         </button>

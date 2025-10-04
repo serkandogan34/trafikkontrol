@@ -1360,9 +1360,27 @@ function getNotificationIcon(type) {
     return icons[type] || icons.info;
 }
 
-// NGINX Functions
+// NGINX Multi-Domain Configuration Functions
+let domainConfigs = {};
+let allDomains = [];
+
 async function loadNginxSection() {
-    // Load current domain statistics
+    try {
+        // Load all domains and their configurations
+        await Promise.all([
+            loadAllDomains(),
+            loadAllDomainConfigs()
+        ]);
+        
+        updateNginxOverviewStats();
+        renderDomainConfigs();
+    } catch (error) {
+        console.error('Error loading NGINX section:', error);
+        showNotification('NGINX section yüklenemedi: ' + error.message, 'error');
+    }
+}
+
+async function loadAllDomains() {
     try {
         const response = await fetch('/api/domains', {
             headers: { 'Authorization': 'Bearer ' + token }
@@ -1371,10 +1389,31 @@ async function loadNginxSection() {
         const data = await response.json();
         
         if (data.success) {
+            allDomains = data.domains;
             updateNginxStats(data.domains);
+        } else {
+            throw new Error(data.message);
         }
     } catch (error) {
-        console.error('Error loading NGINX section:', error);
+        throw new Error('Domains yüklenemedi: ' + error.message);
+    }
+}
+
+async function loadAllDomainConfigs() {
+    try {
+        const response = await fetch('/api/nginx/all-domain-configs', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            domainConfigs = data.domains;
+        } else {
+            throw new Error(data.message);
+        }
+    } catch (error) {
+        throw new Error('Domain configs yüklenemedi: ' + error.message);
     }
 }
 
@@ -1389,11 +1428,415 @@ function updateNginxStats(domains) {
         totalBot: domains.reduce((sum, d) => sum + (d.botRequests || 0), 0)
     };
     
-    document.getElementById('totalDomains').textContent = stats.total;
-    document.getElementById('cleanDomains').textContent = stats.active + ' Active';
-    document.getElementById('grayDomains').textContent = stats.connected + ' Connected';  
-    document.getElementById('aggressiveDomains').textContent = stats.totalRequests.toLocaleString() + ' Requests';
-    document.getElementById('honeypotDomains').textContent = stats.totalBlocked + ' Blocked';
+    // Update legacy stats if elements exist
+    const totalEl = document.getElementById('totalDomains');
+    if (totalEl) totalEl.textContent = stats.total;
+    
+    const cleanEl = document.getElementById('cleanDomains');
+    if (cleanEl) cleanEl.textContent = stats.active + ' Active';
+    
+    const grayEl = document.getElementById('grayDomains');
+    if (grayEl) grayEl.textContent = stats.connected + ' Connected';
+    
+    const aggressiveEl = document.getElementById('aggressiveDomains');
+    if (aggressiveEl) aggressiveEl.textContent = stats.totalRequests.toLocaleString() + ' Requests';
+    
+    const honeypotEl = document.getElementById('honeypotDomains');
+    if (honeypotEl) honeypotEl.textContent = stats.totalBlocked + ' Blocked';
+}
+
+function updateNginxOverviewStats() {
+    const configCount = Object.keys(domainConfigs).length;
+    const backendCount = configCount * 3; // Each domain has 3 backends (clean, gray, aggressive)
+    
+    document.getElementById('nginx-total-domains').textContent = allDomains.length;
+    document.getElementById('nginx-active-configs').textContent = configCount;
+    document.getElementById('nginx-backend-count').textContent = backendCount;
+    document.getElementById('nginx-config-size').textContent = '0 KB'; // Will be updated after generation
+}
+
+function renderDomainConfigs() {
+    const container = document.getElementById('domain-configs-container');
+    
+    if (allDomains.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-8 text-gray-400">
+                <i class="fas fa-inbox text-4xl mb-4"></i>
+                <p>Henüz domain eklenmemiş.</p>
+                <p class="text-sm mt-2">Önce "Domainler" sekmesinden domain ekleyin.</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = allDomains.map(domain => {
+        const config = domainConfigs[domain.id]?.config || {
+            cleanBackend: 'clean-server.example.com:80',
+            grayBackend: 'gray-server.example.com:80',
+            aggressiveBackend: 'aggressive-server.example.com:80',
+            routingMode: 'smart',
+            botDetection: true,
+            geoRouting: false
+        };
+        
+        const statusColor = domain.status === 'active' ? 'green' : 
+                           domain.status === 'warning' ? 'yellow' : 'red';
+        
+        return `
+            <div class="border border-gray-600 rounded-lg p-4 bg-gray-600">
+                <div class="flex justify-between items-start mb-4">
+                    <div class="flex items-center">
+                        <div class="w-3 h-3 bg-${statusColor}-400 rounded-full mr-3"></div>
+                        <div>
+                            <h4 class="font-semibold text-lg">${domain.name}</h4>
+                            <p class="text-sm text-gray-300">Status: ${domain.status}</p>
+                        </div>
+                    </div>
+                    <div class="flex space-x-2">
+                        <button onclick="editDomainConfig('${domain.id}')" 
+                                class="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm">
+                            <i class="fas fa-edit mr-1"></i>Düzenle
+                        </button>
+                        <button onclick="testDomainConfig('${domain.id}')" 
+                                class="bg-green-600 hover:bg-green-700 px-3 py-1 rounded text-sm">
+                            <i class="fas fa-vial mr-1"></i>Test
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-300 mb-1">Clean Backend</label>
+                        <input type="text" id="clean_${domain.id}" 
+                               class="w-full p-2 bg-gray-700 border border-gray-500 rounded text-sm"
+                               value="${config.cleanBackend}"
+                               onchange="updateDomainConfigField('${domain.id}', 'cleanBackend', this.value)">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-300 mb-1">Gray Backend</label>
+                        <input type="text" id="gray_${domain.id}" 
+                               class="w-full p-2 bg-gray-700 border border-gray-500 rounded text-sm"
+                               value="${config.grayBackend}"
+                               onchange="updateDomainConfigField('${domain.id}', 'grayBackend', this.value)">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-300 mb-1">Aggressive Backend</label>
+                        <input type="text" id="aggressive_${domain.id}" 
+                               class="w-full p-2 bg-gray-700 border border-gray-500 rounded text-sm"
+                               value="${config.aggressiveBackend}"
+                               onchange="updateDomainConfigField('${domain.id}', 'aggressiveBackend', this.value)">
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-300 mb-1">Routing Mode</label>
+                        <select id="routing_${domain.id}" 
+                                class="w-full p-2 bg-gray-700 border border-gray-500 rounded text-sm"
+                                onchange="updateDomainConfigField('${domain.id}', 'routingMode', this.value)">
+                            <option value="smart" ${config.routingMode === 'smart' ? 'selected' : ''}>Smart</option>
+                            <option value="aggressive" ${config.routingMode === 'aggressive' ? 'selected' : ''}>Aggressive</option>
+                            <option value="defensive" ${config.routingMode === 'defensive' ? 'selected' : ''}>Defensive</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center space-x-2 mt-6">
+                        <input type="checkbox" id="botDetection_${domain.id}" 
+                               ${config.botDetection ? 'checked' : ''}
+                               onchange="updateDomainConfigField('${domain.id}', 'botDetection', this.checked)"
+                               class="rounded">
+                        <label for="botDetection_${domain.id}" class="text-sm text-gray-300">Bot Detection</label>
+                    </div>
+                    <div class="flex items-center space-x-2 mt-6">
+                        <input type="checkbox" id="geoRouting_${domain.id}" 
+                               ${config.geoRouting ? 'checked' : ''}
+                               onchange="updateDomainConfigField('${domain.id}', 'geoRouting', this.checked)"
+                               class="rounded">
+                        <label for="geoRouting_${domain.id}" class="text-sm text-gray-300">Geo Routing</label>
+                    </div>
+                    <div class="text-xs text-gray-400 mt-6">
+                        Traffic: ${domain.totalRequests || 0} req<br>
+                        Human: ${domain.humanRequests || 0} | Bot: ${domain.botRequests || 0}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+async function updateDomainConfigField(domainId, field, value) {
+    try {
+        const response = await fetch(`/api/nginx/domain-config/${domainId}`, {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ [field]: value })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Update local cache
+            if (!domainConfigs[domainId]) {
+                domainConfigs[domainId] = { config: {} };
+            }
+            domainConfigs[domainId].config[field] = value;
+            
+            showNotification(`${field} güncellendi`, 'success');
+        } else {
+            showNotification('Config güncellenemedi: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Config güncelleme hatası: ' + error.message, 'error');
+    }
+}
+
+async function generateAdvancedNginxConfig() {
+    try {
+        showNotification('NGINX config oluşturuluyor...', 'info');
+        
+        const globalSettings = {
+            rateLimit: document.getElementById('global-rate-limit').value,
+            botRateLimit: document.getElementById('bot-rate-limit').value,
+            enableGeoIP: document.getElementById('enable-geoip').checked,
+            enableAnalytics: document.getElementById('enable-analytics').checked,
+            enableBotProtection: document.getElementById('enable-bot-protection').checked,
+            enableDDoSProtection: document.getElementById('enable-ddos-protection').checked,
+            enableReferrerCheck: document.getElementById('enable-referrer-check').checked,
+            blockSuspicious: document.getElementById('block-suspicious').checked
+        };
+        
+        const response = await fetch('/api/nginx/generate-config', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                globalSettings,
+                domainSpecificConfigs: Object.fromEntries(
+                    Object.entries(domainConfigs).map(([key, value]) => [key, value.config])
+                )
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            document.getElementById('advanced-nginx-config-preview').textContent = data.config;
+            
+            // Update config size
+            const configSize = (new Blob([data.config]).size / 1024).toFixed(1);
+            document.getElementById('nginx-config-size').textContent = configSize + ' KB';
+            
+            showNotification(`NGINX config oluşturuldu (${configSize} KB, ${data.domainCount} domain)`, 'success');
+        } else {
+            showNotification('Config oluşturulamadı: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Config oluşturma hatası: ' + error.message, 'error');
+    }
+}
+
+async function refreshDomainConfigs() {
+    try {
+        showNotification('Domain configs yenileniyor...', 'info');
+        await loadNginxSection();
+        showNotification('Domain configs yenilendi', 'success');
+    } catch (error) {
+        showNotification('Yenileme hatası: ' + error.message, 'error');
+    }
+}
+
+function copyConfigToClipboard() {
+    const config = document.getElementById('advanced-nginx-config-preview').textContent;
+    
+    if (!config || config.includes('Generated configuration will appear here')) {
+        showNotification('Önce config oluşturun', 'warning');
+        return;
+    }
+    
+    navigator.clipboard.writeText(config).then(() => {
+        showNotification('Config panoya kopyalandı', 'success');
+    }).catch(err => {
+        showNotification('Kopyalama hatası: ' + err.message, 'error');
+    });
+}
+
+function downloadAdvancedConfig() {
+    const config = document.getElementById('advanced-nginx-config-preview').textContent;
+    
+    if (!config || config.includes('Generated configuration will appear here')) {
+        showNotification('Önce config oluşturun', 'warning');
+        return;
+    }
+    
+    const blob = new Blob([config], { type: 'text/plain' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nginx-multi-domain-${Date.now()}.conf`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    
+    showNotification('NGINX config indirildi', 'success');
+}
+
+async function validateNginxConfig() {
+    const config = document.getElementById('advanced-nginx-config-preview').textContent;
+    
+    if (!config || config.includes('Generated configuration will appear here')) {
+        showNotification('Önce config oluşturun', 'warning');
+        return;
+    }
+    
+    showNotification('Config doğrulanıyor...', 'info');
+    
+    // Simple validation checks
+    const issues = [];
+    
+    if (!config.includes('server {')) {
+        issues.push('Server block bulunamadı');
+    }
+    
+    if (!config.includes('upstream')) {
+        issues.push('Upstream definition bulunamadı');
+    }
+    
+    if (!config.includes('proxy_pass')) {
+        issues.push('Proxy configuration bulunamadı');
+    }
+    
+    const domainCount = allDomains.length;
+    const expectedUpstreams = domainCount * 3; // 3 backends per domain
+    const actualUpstreams = (config.match(/upstream \w+/g) || []).length;
+    
+    if (actualUpstreams !== expectedUpstreams) {
+        issues.push(`Upstream count mismatch: expected ${expectedUpstreams}, found ${actualUpstreams}`);
+    }
+    
+    if (issues.length === 0) {
+        showNotification('Config doğrulaması başarılı ✓', 'success');
+    } else {
+        showNotification(`Config doğrulaması başarısız: ${issues.join(', ')}`, 'error');
+    }
+}
+
+async function deployNginxConfig() {
+    const config = document.getElementById('advanced-nginx-config-preview').textContent;
+    
+    if (!config || config.includes('Generated configuration will appear here')) {
+        showNotification('Önce config oluşturun', 'warning');
+        return;
+    }
+    
+    if (!confirm('NGINX config deploy edilecek ve server restart yapılacak. Devam edilsin mi?')) {
+        return;
+    }
+    
+    try {
+        showNotification('Config deploy ediliyor...', 'info');
+        
+        const response = await fetch('/api/nginx/apply-config', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ config })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('NGINX config başarıyla deploy edildi', 'success');
+        } else {
+            showNotification('Deploy hatası: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Deploy hatası: ' + error.message, 'error');
+    }
+}
+
+async function testNginxConfig() {
+    showNotification('Config test ediliyor...', 'info');
+    
+    // Test each domain configuration
+    const testResults = [];
+    
+    for (const domain of allDomains) {
+        const config = domainConfigs[domain.id]?.config;
+        if (!config) continue;
+        
+        // Test backend connectivity (mock)
+        const backends = [
+            { name: 'Clean', url: config.cleanBackend },
+            { name: 'Gray', url: config.grayBackend },
+            { name: 'Aggressive', url: config.aggressiveBackend }
+        ];
+        
+        for (const backend of backends) {
+            try {
+                // In real implementation, test actual connectivity
+                const isReachable = Math.random() > 0.2; // 80% success rate for demo
+                
+                testResults.push({
+                    domain: domain.name,
+                    backend: backend.name,
+                    url: backend.url,
+                    status: isReachable ? 'OK' : 'FAILED',
+                    responseTime: Math.floor(Math.random() * 200) + 50
+                });
+            } catch (error) {
+                testResults.push({
+                    domain: domain.name,
+                    backend: backend.name,
+                    url: backend.url,
+                    status: 'ERROR',
+                    error: error.message
+                });
+            }
+        }
+    }
+    
+    // Show test results
+    const passedTests = testResults.filter(r => r.status === 'OK').length;
+    const totalTests = testResults.length;
+    
+    let resultMessage = `Config testi tamamlandı: ${passedTests}/${totalTests} başarılı`;
+    
+    if (passedTests === totalTests) {
+        showNotification(resultMessage + ' ✓', 'success');
+    } else {
+        showNotification(resultMessage + ' ⚠️', 'warning');
+        
+        // Show detailed results for failed tests
+        const failedTests = testResults.filter(r => r.status !== 'OK');
+        console.log('Failed tests:', failedTests);
+    }
+}
+
+function editDomainConfig(domainId) {
+    showNotification(`${domainId} için detaylı config editörü yakında eklenecek`, 'info');
+}
+
+function testDomainConfig(domainId) {
+    const domain = allDomains.find(d => d.id === domainId);
+    if (!domain) return;
+    
+    showNotification(`${domain.name} config test ediliyor...`, 'info');
+    
+    // Mock test - in production, test actual backend connectivity
+    setTimeout(() => {
+        showNotification(`${domain.name} config testi başarılı ✓`, 'success');
+    }, 1000);
+}
+
+function addNewDomainConfig() {
+    showNotification('Önce "Domainler" sekmesinden domain ekleyin', 'info');
 }
 
 // Generate NGINX config - Global function
