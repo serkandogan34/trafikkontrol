@@ -1,0 +1,20 @@
+{
+  "name": "trafikkontrol",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:server": "wrangler pages dev dist --ip 0.0.0.0 --port 3001",
+    "build": "vite build",
+    "preview": "wrangler pages dev",
+    "clean-port": "fuser -k 3001/tcp 2>/dev/null || true",
+    "test": "curl http://localhost:3001"
+  },
+  "dependencies": {
+    "hono": "^4.9.9"
+  },
+  "devDependencies": {
+    "@hono/vite-cloudflare-pages": "^0.4.2",
+    "vite": "^6.3.5",
+    "wrangler": "^4.4.0"
+  }
+}
