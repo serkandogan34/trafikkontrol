@@ -1,5 +1,86 @@
 // Dashboard JavaScript - External file to avoid template literal issues
 
+// Global variables
+let token = localStorage.getItem('authToken');
+let monitoringInterval = null;
+let lastGeneratedConfig = '';
+
+// =============================================================================
+// CORE UTILITY FUNCTIONS
+// =============================================================================
+
+// Download advanced NGINX config
+async function downloadAdvancedConfig() {
+    try {
+        const response = await fetch('/api/nginx/download-config', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        if (response.ok) {
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `nginx-traffic-management-${Date.now()}.conf`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            showNotification('NGINX konfigürasyonu indirildi', 'success');
+        } else {
+            const data = await response.json();
+            showNotification('İndirme hatası: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('İndirme hatası: ' + error.message, 'error');
+    }
+}
+
+// Copy config to clipboard
+function copyConfigToClipboard() {
+    const configText = document.getElementById('advanced-nginx-config-preview').textContent;
+    if (configText && configText.length > 100) {
+        navigator.clipboard.writeText(configText).then(() => {
+            showNotification('Konfigürasyon panoya kopyalandı', 'success');
+        }).catch(err => {
+            showNotification('Panoya kopyalama hatası', 'error');
+        });
+    } else {
+        showNotification('Önce konfigürasyon oluşturun', 'error');
+    }
+}
+
+// Show notification
+function showNotification(message, type = 'info') {
+    console.log(`[${type.toUpperCase()}] ${message}`);
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = `fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg transition-opacity duration-300 ${
+        type === 'success' ? 'bg-green-600 text-white' :
+        type === 'error' ? 'bg-red-600 text-white' :
+        type === 'warning' ? 'bg-yellow-600 text-white' :
+        'bg-blue-600 text-white'
+    }`;
+    notification.innerHTML = `
+        <div class="flex items-center">
+            <i class="fas fa-${type === 'success' ? 'check' : type === 'error' ? 'exclamation-triangle' : 'info'} mr-2"></i>
+            ${message}
+        </div>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Remove after 3 seconds
+    setTimeout(() => {
+        notification.style.opacity = '0';
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.parentNode.removeChild(notification);
+            }
+        }, 300);
+    }, 3000);
+}
+
 // =============================================================================
 // ADVANCED DNS MANAGEMENT FUNCTIONS
 // =============================================================================

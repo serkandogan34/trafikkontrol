@@ -1392,6 +1392,38 @@ app.post('/api/nginx/apply-config', requireAuth, async (c) => {
   })
 })
 
+// Download NGINX configuration file
+app.get('/api/nginx/download-config', requireAuth, async (c) => {
+  try {
+    const domainList = Array.from(domains.values())
+    const domainConfigs = {}
+    
+    domainList.forEach(domain => {
+      domainConfigs[domain.id] = getDomainBackendConfig(domain.id)
+    })
+    
+    // Generate comprehensive NGINX config
+    const config = generateAdvancedNginxConfig({
+      domains: domainList,
+      globalBackends: {},
+      domainConfigs: domainConfigs,
+      globalSettings: {}
+    })
+    
+    // Set headers for file download
+    c.header('Content-Type', 'text/plain')
+    c.header('Content-Disposition', `attachment; filename="nginx-traffic-management-${Date.now()}.conf"`)
+    c.header('Cache-Control', 'no-cache')
+    
+    return c.text(config)
+  } catch (error) {
+    return c.json({
+      success: false,
+      message: 'Config download failed: ' + error.message
+    }, 500)
+  }
+})
+
 // Real traffic tracking API (NGINX will call this)
 app.post('/api/traffic/log', async (c) => {
   const { 
@@ -2228,6 +2260,13 @@ app.get('/api/check-dns', requireAuth, async (c) => {
   }
 })
 
+// Favicon route - prevent 500 error
+app.get('/favicon.ico', (c) => {
+  // Return 204 No Content for favicon requests
+  c.header('Cache-Control', 'public, max-age=86400')
+  return c.body(null, 204)
+})
+
 // Main pages
 app.get('/', (c) => {
   return c.html(`
@@ -2601,9 +2640,7 @@ app.get('/dashboard', (c) => {
                         </button>
                         <button onclick="testNginxConfig()" 
                                 class="bg-green-600 hover:bg-green-700 px-6 py-3 rounded-lg font-medium">
-                            <i class="fas fa-vial mr-2"></i>Test Config</button>
-                                class="bg-yellow-600 hover:bg-yellow-700 px-6 py-3 rounded-lg font-medium">
-                            <i class="fas fa-rocket mr-2"></i>Deploy
+                            <i class="fas fa-vial mr-2"></i>Test Config
                         </button>
                     </div>
                 </div>
