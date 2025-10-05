@@ -29,9 +29,6 @@ const domains = new Map()
 // Per-domain data structure for comprehensive traffic management
 const domainDataStore = new Map()
 
-// Domain data managers for real-time analytics
-const domainManagers = new Map()
-
 // DNS Management System
 const dnsRecords = new Map()
 
@@ -243,23 +240,17 @@ class DomainDataManager {
     return { status: 'unknown', rule: null }
   }
   
-  // Log visitor analytics with advanced bot detection
+  // Log visitor analytics
   logVisitor(visitorData) {
-    const { ip, userAgent, referer, isBot, country, action, botAnalysis } = visitorData
-    
-    // Perform advanced bot detection if not already done
-    const detailedBotAnalysis = botAnalysis || this.detectBot(userAgent, ip, { referer })
+    const { ip, userAgent, referer, isBot, country, action } = visitorData
     
     // Update counters
     this.data.analytics.totalRequests++
-    if (detailedBotAnalysis.isBot) {
+    if (isBot) {
       this.data.analytics.botRequests++
     } else {
       this.data.analytics.humanRequests++
     }
-    
-    // Update advanced bot metrics
-    this.updateAdvancedBotMetrics(detailedBotAnalysis, country, action)
     
     // Update action counters
     if (action === 'clean') this.data.analytics.cleanServed++
@@ -276,7 +267,7 @@ class DomainDataManager {
       this.data.analytics.countries[country] = { requests: 0, humans: 0, bots: 0 }
     }
     this.data.analytics.countries[country].requests++
-    if (detailedBotAnalysis.isBot) {
+    if (isBot) {
       this.data.analytics.countries[country].bots++
     } else {
       this.data.analytics.countries[country].humans++
@@ -288,25 +279,19 @@ class DomainDataManager {
       this.data.analytics.hourlyStats[hourKey] = { requests: 0, humans: 0, bots: 0 }
     }
     this.data.analytics.hourlyStats[hourKey].requests++
-    if (detailedBotAnalysis.isBot) {
+    if (isBot) {
       this.data.analytics.hourlyStats[hourKey].bots++
     } else {
       this.data.analytics.hourlyStats[hourKey].humans++
     }
     
-    // Add to recent visitors (keep last 1000) with enhanced bot data
+    // Add to recent visitors (keep last 1000)
     const visitor = {
       ip,
       userAgent: userAgent?.substring(0, 200) || 'Unknown',
       referer: referer?.substring(0, 200) || '',
       timestamp: new Date().toISOString(),
-      isBot: detailedBotAnalysis.isBot,
-      botType: detailedBotAnalysis.type,
-      botName: detailedBotAnalysis.name,
-      botLegitimate: detailedBotAnalysis.legitimate,
-      botVerified: detailedBotAnalysis.verified,
-      botConfidence: detailedBotAnalysis.confidence,
-      botDetails: detailedBotAnalysis.details,
+      isBot,
       country,
       action
     }
@@ -321,110 +306,6 @@ class DomainDataManager {
     
     // Save data
     this.save()
-  }
-  
-  // Update advanced bot metrics with detailed categorization
-  updateAdvancedBotMetrics(botAnalysis, country, action) {
-    // Initialize bot metrics if not exists
-    if (!this.data.analytics.botMetrics) {
-      this.data.analytics.botMetrics = {
-        byType: {
-          search_engine: { total: 0, verified: 0, countries: {}, hourly: {} },
-          social_crawler: { total: 0, verified: 0, countries: {}, hourly: {} },
-          monitoring: { total: 0, verified: 0, countries: {}, hourly: {} },
-          malicious: { total: 0, verified: 0, countries: {}, hourly: {} },
-          suspicious_human: { total: 0, verified: 0, countries: {}, hourly: {} },
-          human: { total: 0, verified: 0, countries: {}, hourly: {} }
-        },
-        byName: {},
-        verificationStats: {
-          googleBotVerified: 0,
-          facebookBotVerified: 0,
-          twitterBotVerified: 0,
-          totalVerificationAttempts: 0
-        },
-        confidenceDistribution: {
-          '0-20': 0, '21-40': 0, '41-60': 0, '61-80': 0, '81-100': 0
-        },
-        legitimateVsMalicious: {
-          legitimate: 0,
-          malicious: 0,
-          suspicious: 0
-        },
-        actionsByBotType: {
-          search_engine: { clean: 0, gray: 0, aggressive: 0, blocked: 0 },
-          social_crawler: { clean: 0, gray: 0, aggressive: 0, blocked: 0 },
-          monitoring: { clean: 0, gray: 0, aggressive: 0, blocked: 0 },
-          malicious: { clean: 0, gray: 0, aggressive: 0, blocked: 0 },
-          suspicious_human: { clean: 0, gray: 0, aggressive: 0, blocked: 0 },
-          human: { clean: 0, gray: 0, aggressive: 0, blocked: 0 }
-        }
-      }
-    }
-    
-    const metrics = this.data.analytics.botMetrics
-    const { type, name, verified, confidence, legitimate } = botAnalysis
-    
-    // Update type-based metrics
-    if (metrics.byType[type]) {
-      metrics.byType[type].total++
-      if (verified) metrics.byType[type].verified++
-      
-      // Country stats for this bot type
-      if (!metrics.byType[type].countries[country]) {
-        metrics.byType[type].countries[country] = 0
-      }
-      metrics.byType[type].countries[country]++
-      
-      // Hourly stats for this bot type
-      const hourKey = new Date().toISOString().substring(0, 13)
-      if (!metrics.byType[type].hourly[hourKey]) {
-        metrics.byType[type].hourly[hourKey] = 0
-      }
-      metrics.byType[type].hourly[hourKey]++
-    }
-    
-    // Update name-based metrics
-    if (!metrics.byName[name]) {
-      metrics.byName[name] = { total: 0, verified: 0, type: type, lastSeen: '' }
-    }
-    metrics.byName[name].total++
-    if (verified) metrics.byName[name].verified++
-    metrics.byName[name].lastSeen = new Date().toISOString()
-    
-    // Update verification stats
-    if (name === 'googlebot' && verified) metrics.verificationStats.googleBotVerified++
-    if (name === 'facebookexternalhit' && verified) metrics.verificationStats.facebookBotVerified++
-    if (name === 'twitterbot' && verified) metrics.verificationStats.twitterBotVerified++
-    if (type === 'search_engine' || type === 'social_crawler') {
-      metrics.verificationStats.totalVerificationAttempts++
-    }
-    
-    // Update confidence distribution
-    let confidenceRange
-    if (confidence <= 20) confidenceRange = '0-20'
-    else if (confidence <= 40) confidenceRange = '21-40'
-    else if (confidence <= 60) confidenceRange = '41-60'
-    else if (confidence <= 80) confidenceRange = '61-80'
-    else confidenceRange = '81-100'
-    
-    metrics.confidenceDistribution[confidenceRange]++
-    
-    // Update legitimate vs malicious stats
-    if (legitimate === true) {
-      metrics.legitimateVsMalicious.legitimate++
-    } else if (legitimate === false) {
-      if (type === 'suspicious_human') {
-        metrics.legitimateVsMalicious.suspicious++
-      } else {
-        metrics.legitimateVsMalicious.malicious++
-      }
-    }
-    
-    // Update actions by bot type
-    if (metrics.actionsByBotType[type] && action) {
-      metrics.actionsByBotType[type][action]++
-    }
   }
   
   // Analyze referrer type
@@ -739,260 +620,18 @@ class DomainDataManager {
     return alerts
   }
   
-  // Advanced bot detection with detailed analysis
-  detectBot(userAgent, ip = null, additionalData = {}) {
-    if (!userAgent) return { isBot: true, type: 'unknown', confidence: 100, details: 'No user agent' }
+  // Simple bot detection
+  detectBot(userAgent) {
+    if (!userAgent) return true
     
-    const analysis = this.analyzeUserAgent(userAgent)
-    
-    // Combine with IP analysis if available
-    if (ip) {
-      const ipAnalysis = this.analyzeIPPattern(ip)
-      analysis.confidence = Math.max(analysis.confidence, ipAnalysis.confidence)
-      analysis.details += ` | IP: ${ipAnalysis.details}`
-    }
-    
-    // Add behavioral analysis if available
-    if (additionalData.behaviorScore) {
-      analysis.confidence = Math.max(analysis.confidence, additionalData.behaviorScore)
-    }
-    
-    return analysis
-  }
-  
-  // Detailed User Agent Analysis
-  analyzeUserAgent(userAgent) {
-    const ua = userAgent.toLowerCase()
-    
-    // Legitimate Search Engine Bots (GOOD BOTS)
-    const searchEngineBots = {
-      'googlebot': { pattern: /googlebot/i, verify: (ua) => this.verifyGoogleBot(ua) },
-      'bingbot': { pattern: /bingbot/i, verify: (ua) => this.verifyBingBot(ua) },
-      'yandexbot': { pattern: /yandexbot/i, verify: null },
-      'baiduspider': { pattern: /baiduspider/i, verify: null },
-      'duckduckbot': { pattern: /duckduckbot/i, verify: null }
-    }
-    
-    // Social Media Crawlers (GOOD BOTS)
-    const socialCrawlers = {
-      'facebookexternalhit': { pattern: /facebookexternalhit/i, verify: (ua) => this.verifyFacebookBot(ua) },
-      'twitterbot': { pattern: /twitterbot/i, verify: (ua) => this.verifyTwitterBot(ua) },
-      'linkedinbot': { pattern: /linkedinbot/i, verify: null },
-      'whatsapp': { pattern: /whatsapp/i, verify: null },
-      'telegram': { pattern: /telegram/i, verify: null },
-      'discordbot': { pattern: /discordbot/i, verify: null }
-    }
-    
-    // Monitoring & Tools (NEUTRAL BOTS)
-    const monitoringBots = {
-      'uptimerobot': { pattern: /uptimerobot/i, verify: null },
-      'pingdom': { pattern: /pingdom/i, verify: null },
-      'gtmetrix': { pattern: /gtmetrix/i, verify: null },
-      'lighthouse': { pattern: /lighthouse/i, verify: null }
-    }
-    
-    // Malicious/Scraper Patterns (BAD BOTS)
-    const maliciousBots = [
-      /bot/i, /crawler/i, /spider/i, /scraper/i, /scrapping/i,
-      /curl/i, /wget/i, /python/i, /requests/i, /urllib/i,
-      /selenium/i, /phantomjs/i, /headless/i, /zombie/i,
-      /scrapy/i, /mechanize/i, /grab/i, /libwww/i
+    const botPatterns = [
+      /bot/i, /crawler/i, /spider/i, /scraper/i,
+      /googlebot/i, /bingbot/i, /slurp/i, /duckduckbot/i,
+      /facebookexternalhit/i, /twitterbot/i, /linkedinbot/i,
+      /whatsapp/i, /telegram/i, /curl/i, /wget/i
     ]
     
-    // Check for legitimate search engines first
-    for (const [name, bot] of Object.entries(searchEngineBots)) {
-      if (bot.pattern.test(userAgent)) {
-        return {
-          isBot: true,
-          type: 'search_engine',
-          name: name,
-          confidence: 95,
-          legitimate: true,
-          verified: bot.verify ? bot.verify(userAgent) : false,
-          details: `Legitimate search engine: ${name}`
-        }
-      }
-    }
-    
-    // Check for social media crawlers
-    for (const [name, bot] of Object.entries(socialCrawlers)) {
-      if (bot.pattern.test(userAgent)) {
-        return {
-          isBot: true,
-          type: 'social_crawler',
-          name: name,
-          confidence: 90,
-          legitimate: true,
-          verified: bot.verify ? bot.verify(userAgent) : false,
-          details: `Social media crawler: ${name}`
-        }
-      }
-    }
-    
-    // Check for monitoring bots
-    for (const [name, bot] of Object.entries(monitoringBots)) {
-      if (bot.pattern.test(userAgent)) {
-        return {
-          isBot: true,
-          type: 'monitoring',
-          name: name,
-          confidence: 85,
-          legitimate: true,
-          verified: false,
-          details: `Monitoring/testing bot: ${name}`
-        }
-      }
-    }
-    
-    // Check for malicious bot patterns
-    for (const pattern of maliciousBots) {
-      if (pattern.test(userAgent)) {
-        return {
-          isBot: true,
-          type: 'malicious',
-          name: 'unknown_bot',
-          confidence: 80,
-          legitimate: false,
-          verified: false,
-          details: `Potential malicious bot detected`
-        }
-      }
-    }
-    
-    // Check for suspicious patterns in legitimate browsers
-    const suspiciousPatterns = this.checkSuspiciousPatterns(userAgent)
-    if (suspiciousPatterns.suspicious) {
-      return {
-        isBot: false,
-        type: 'suspicious_human',
-        name: 'suspicious_browser',
-        confidence: suspiciousPatterns.confidence,
-        legitimate: false,
-        verified: false,
-        details: suspiciousPatterns.details
-      }
-    }
-    
-    // Appears to be human
-    return {
-      isBot: false,
-      type: 'human',
-      name: 'legitimate_browser',
-      confidence: 10,
-      legitimate: true,
-      verified: false,
-      details: 'Appears to be legitimate human browser'
-    }
-  }
-  
-  // Verify Google Bot authenticity
-  verifyGoogleBot(userAgent) {
-    // In production, this would do reverse DNS lookup
-    // For now, check for authentic Google Bot patterns
-    const authenticity = [
-      /googlebot/i.test(userAgent),
-      /google/i.test(userAgent),
-      /\+http:\/\/www\.google\.com\/bot\.html/i.test(userAgent)
-    ]
-    
-    return authenticity.filter(check => check).length >= 2
-  }
-  
-  // Verify Bing Bot authenticity
-  verifyBingBot(userAgent) {
-    // Check for authentic Bing bot patterns
-    return /bingbot\/[0-9]+\.[0-9]+/i.test(userAgent)
-  }
-  
-  // Verify Facebook Bot authenticity  
-  verifyFacebookBot(userAgent) {
-    // Check for authentic Facebook External Hit patterns
-    return /facebookexternalhit\/[0-9]+\.[0-9]+/i.test(userAgent)
-  }
-  
-  // Verify Twitter Bot authenticity
-  verifyTwitterBot(userAgent) {
-    // Check for authentic Twitter bot patterns
-    return /twitterbot\/[0-9]+\.[0-9]+/i.test(userAgent)
-  }
-  
-  // Check for suspicious patterns in user agents
-  checkSuspiciousPatterns(userAgent) {
-    const suspiciousIndicators = []
-    let confidence = 0
-    
-    // Missing version numbers in common browsers
-    if (/chrome/i.test(userAgent) && !/chrome\/[0-9]/i.test(userAgent)) {
-      suspiciousIndicators.push('Chrome without version')
-      confidence += 20
-    }
-    
-    if (/firefox/i.test(userAgent) && !/firefox\/[0-9]/i.test(userAgent)) {
-      suspiciousIndicators.push('Firefox without version')
-      confidence += 20
-    }
-    
-    // Outdated browser versions (potential bot)
-    if (/chrome\/[1-5][0-9]\./i.test(userAgent)) {
-      suspiciousIndicators.push('Very old Chrome version')
-      confidence += 15
-    }
-    
-    // Missing common browser components
-    if (!/mozilla/i.test(userAgent) && (/chrome|firefox|safari/i.test(userAgent))) {
-      suspiciousIndicators.push('Missing Mozilla identifier')
-      confidence += 25
-    }
-    
-    // Suspicious combinations
-    if (/windows/i.test(userAgent) && /macintosh/i.test(userAgent)) {
-      suspiciousIndicators.push('Invalid OS combination')
-      confidence += 30
-    }
-    
-    return {
-      suspicious: confidence > 25,
-      confidence: confidence,
-      details: suspiciousIndicators.join(', ') || 'No suspicious patterns'
-    }
-  }
-  
-  // IP Pattern Analysis
-  analyzeIPPattern(ip) {
-    // Known bot IP ranges (simplified for demo)
-    const botRanges = [
-      '66.249.', // Google
-      '157.55.', // Bing  
-      '40.77.',  // Bing
-      '207.46.', // Bing
-      '69.171.', // Facebook
-      '173.252.', // Facebook
-      '199.59.', // Twitter
-      '54.230.'  // CloudFront/AWS
-    ]
-    
-    const isKnownBot = botRanges.some(range => ip.startsWith(range))
-    
-    if (isKnownBot) {
-      return {
-        confidence: 85,
-        details: 'Known bot IP range'
-      }
-    }
-    
-    // Check for suspicious IP patterns
-    const suspiciousPatterns = [
-      /^10\./,        // Private IP (suspicious if external)
-      /^192\.168\./,  // Private IP
-      /^172\.(1[6-9]|2[0-9]|3[01])\./  // Private IP
-    ]
-    
-    const isSuspicious = suspiciousPatterns.some(pattern => pattern.test(ip))
-    
-    return {
-      confidence: isSuspicious ? 30 : 5,
-      details: isSuspicious ? 'Suspicious IP pattern' : 'Normal IP pattern'
-    }
+    return botPatterns.some(pattern => pattern.test(userAgent))
   }
   
   // =============================================================================
@@ -2219,48 +1858,13 @@ function getDomainDataManager(domainName) {
 
 // DNS record types and validation
 const DNS_RECORD_TYPES = {
-  A: { 
-    name: 'A Record', 
-    description: 'IPv4 adresi', 
-    validation: /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/,
-    mathRange: '0.0.0.0 - 255.255.255.255'
-  },
-  AAAA: { 
-    name: 'AAAA Record', 
-    description: 'IPv6 adresi', 
-    validation: /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:)$/,
-    mathRange: '0000:0000:0000:0000:0000:0000:0000:0000 - FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF:FFFF'
-  },
-  CNAME: { 
-    name: 'CNAME Record', 
-    description: 'Canonical name', 
-    validation: /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/,
-    mathRange: '1-253 characters, valid domain format'
-  },
-  MX: { 
-    name: 'MX Record', 
-    description: 'Mail exchange', 
-    validation: /^(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{1,3}|[0-9])\s+[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/,
-    mathRange: 'Priority: 0-65535 + valid domain'
-  },
-  TXT: { 
-    name: 'TXT Record', 
-    description: 'Text kayıt', 
-    validation: /^.{1,255}$/,
-    mathRange: '1-255 characters per string, max 4096 characters total'
-  },
-  NS: { 
-    name: 'NS Record', 
-    description: 'Name server', 
-    validation: /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/,
-    mathRange: '1-253 characters, valid domain format'
-  },
-  PTR: { 
-    name: 'PTR Record', 
-    description: 'Pointer record', 
-    validation: /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/,
-    mathRange: '1-253 characters, valid domain format'
-  }
+  A: { name: 'A Record', description: 'IPv4 adresi', validation: /^(\d{1,3}\.){3}\d{1,3}$/ },
+  AAAA: { name: 'AAAA Record', description: 'IPv6 adresi', validation: /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$/ },
+  CNAME: { name: 'CNAME Record', description: 'Canonical name', validation: /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
+  MX: { name: 'MX Record', description: 'Mail exchange', validation: /^\d+\s+[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
+  TXT: { name: 'TXT Record', description: 'Text kayıt', validation: /.+/ },
+  NS: { name: 'NS Record', description: 'Name server', validation: /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
+  PTR: { name: 'PTR Record', description: 'Pointer record', validation: /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ }
 }
 
 // Advanced DNS Features Configuration
@@ -2523,7 +2127,7 @@ const checkDNSTunneling = (url) => {
   return false
 }
 
-// Geographic DNS resolution with weight-based mathematics
+// Geographic DNS resolution
 const resolveGeoDNS = (clientIP, domain) => {
   if (!GEODNS_CONFIG.enabled) {
     return GEODNS_CONFIG.fallback
@@ -2532,21 +2136,11 @@ const resolveGeoDNS = (clientIP, domain) => {
   const country = getCountryFromIP(clientIP)
   const geoRule = GEODNS_CONFIG.rules[country] || GEODNS_CONFIG.rules.DEFAULT
   
-  // Weight-based load balancing mathematics
+  // Simple load balancing within geographic region
   const servers = geoRule.servers
-  const weight = geoRule.weight
+  const randomIndex = Math.floor(Math.random() * servers.length)
   
-  // Apply weight factor to selection probability
-  const weightedRandom = Math.random() * (weight / 100)
-  
-  if (weightedRandom < 0.5 || servers.length === 1) {
-    // Primary server selection (50% base probability + weight factor)
-    return servers[0]
-  } else {
-    // Distribute remaining load across other servers
-    const serverIndex = Math.floor(Math.random() * servers.length)
-    return servers[serverIndex]
-  }
+  return servers[randomIndex]
 }
 
 // DNS load balancing
@@ -2627,67 +2221,7 @@ const validateDNSRecord = (type, value) => {
   const recordType = DNS_RECORD_TYPES[type]
   if (!recordType) return false
   
-  // Basic regex validation
-  if (!recordType.validation.test(value)) return false
-  
-  // Additional mathematical validations
-  switch (type) {
-    case 'A':
-      // IPv4: Each octet must be 0-255
-      const octets = value.split('.')
-      return octets.every(octet => {
-        const num = parseInt(octet, 10)
-        return num >= 0 && num <= 255 && octet === num.toString()
-      })
-    
-    case 'MX':
-      // MX: Priority must be 0-65535
-      const [priority] = value.split(' ')
-      const priorityNum = parseInt(priority, 10)
-      return priorityNum >= 0 && priorityNum <= 65535
-      
-    case 'TXT':
-      // TXT: Each string max 255 chars, total max 4096
-      return value.length <= 4096
-      
-    case 'CNAME':
-    case 'NS':
-    case 'PTR':
-      // Domain names: max 253 characters total
-      return value.length <= 253
-      
-    case 'AAAA':
-      // IPv6: Additional validation for proper format
-      try {
-        // IPv6 validation with proper double colon check
-        if (value.includes('::')) {
-          // Double colon can only appear once
-          const parts = value.split('::')
-          if (parts.length > 2) return false
-          
-          // Validate each part
-          return parts.every(part => {
-            if (part === '') return true
-            const groups = part.split(':')
-            return groups.every(group => 
-              group === '' || (group.length <= 4 && /^[0-9a-fA-F]*$/.test(group))
-            )
-          })
-        } else {
-          // Regular IPv6 format (8 groups)
-          const groups = value.split(':')
-          if (groups.length !== 8) return false
-          return groups.every(group => 
-            group.length <= 4 && /^[0-9a-fA-F]+$/.test(group)
-          )
-        }
-      } catch {
-        return false
-      }
-      
-    default:
-      return true
-  }
+  return recordType.validation.test(value)
 }
 
 const checkDNSPropagation = async (domain, recordType = 'A') => {
@@ -3949,388 +3483,6 @@ app.get('/api/domains/:id/analytics/detailed', requireAuth, (c) => {
   })
 })
 
-
-// Create test traffic endpoint 
-app.post('/api/test/create-traffic', async (c) => {
-  const domain = 'test-domain.com'
-  
-  // Get or create domain data manager
-  let dataManager = domainManagers.get(domain)
-  if (!dataManager) {
-    dataManager = new DomainDataManager(domain)
-    domainManagers.set(domain, dataManager)
-  }
-  
-  // Create test visitors with various bot types
-  const testVisitors = [
-    // Google Bot - legitimate
-    {
-      ip: '66.249.66.1',
-      userAgent: 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-      referer: null,
-      timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString()
-    },
-    // Facebook Bot - legitimate
-    {
-      ip: '69.63.176.1',
-      userAgent: 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
-      referer: null,
-      timestamp: new Date(Date.now() - 1000 * 60 * 10).toISOString()
-    },
-    // Python requests - malicious
-    {
-      ip: '192.168.1.100',
-      userAgent: 'python-requests/2.28.1',
-      referer: null,
-      timestamp: new Date(Date.now() - 1000 * 60 * 15).toISOString()
-    },
-    // Curl - suspicious
-    {
-      ip: '203.0.113.50',
-      userAgent: 'curl/7.68.0',
-      referer: null,
-      timestamp: new Date(Date.now() - 1000 * 60 * 20).toISOString()
-    },
-    // Real human - Chrome
-    {
-      ip: '203.0.113.1',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-      referer: 'https://google.com',
-      timestamp: new Date(Date.now() - 1000 * 60 * 25).toISOString()
-    },
-    // Selenium - malicious
-    {
-      ip: '10.0.0.5',
-      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 selenium',
-      referer: null,
-      timestamp: new Date(Date.now() - 1000 * 60 * 30).toISOString()
-    },
-    // Bing Bot - legitimate
-    {
-      ip: '40.77.167.1',
-      userAgent: 'Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)',
-      referer: null,
-      timestamp: new Date(Date.now() - 1000 * 60 * 35).toISOString()
-    }
-  ]
-  
-  // Process each test visitor
-  for (const visitor of testVisitors) {
-    // Perform bot detection
-    const botAnalysis = dataManager.detectBot(visitor.userAgent, visitor.ip, { referer: visitor.referer })
-    
-    // Add bot analysis to visitor data
-    const enrichedVisitor = {
-      ...visitor,
-      isBot: botAnalysis.isBot,
-      botType: botAnalysis.type,
-      botName: botAnalysis.name,
-      botVerified: botAnalysis.verified || false,
-      botLegitimate: botAnalysis.legitimate,
-      botConfidence: botAnalysis.confidence,
-      country: 'Turkey', // Default country
-      action: botAnalysis.isBot && !botAnalysis.legitimate ? 'blocked' : 'clean'
-    }
-    
-    dataManager.logVisitor(enrichedVisitor)
-  }
-  
-  return c.json({ 
-    success: true, 
-    message: 'Test traffic oluşturuldu',
-    visitorsCreated: testVisitors.length,
-    domain: domain
-  })
-})
-
-// Get real domain analytics (public for testing)
-app.get('/api/test/domain/:domain/analytics/bots', (c) => {
-  const domainName = c.req.param('domain')
-  const timeRange = c.req.query('timeRange') || '24h'
-  
-  const dataManager = domainManagers.get(domainName)
-  if (!dataManager) {
-    return c.json({ 
-      success: false, 
-      message: 'Domain bulunamadı. Önce test traffic oluşturun.' 
-    }, 404)
-  }
-  
-  const analytics = dataManager.data.analytics
-  
-  // Filter recent visitors by time range
-  const now = new Date()
-  const timeRanges = {
-    '1h': 1 * 60 * 60 * 1000,
-    '24h': 24 * 60 * 60 * 1000,
-    '7d': 7 * 24 * 60 * 60 * 1000,
-    '30d': 30 * 24 * 60 * 60 * 1000
-  }
-  
-  const cutoffTime = timeRanges[timeRange] ? new Date(now.getTime() - timeRanges[timeRange]) : null
-  let recentBotActivity = analytics.recentVisitors || []
-  
-  if (cutoffTime) {
-    recentBotActivity = recentBotActivity.filter(v => new Date(v.timestamp) > cutoffTime)
-  }
-  
-  // Calculate top bot names
-  const botCounts = {}
-  recentBotActivity.filter(v => v.isBot && v.botName).forEach(v => {
-    botCounts[v.botName] = (botCounts[v.botName] || 0) + 1
-  })
-  
-  const topBotNames = Object.entries(botCounts)
-    .sort(([,a], [,b]) => b - a)
-    .slice(0, 10)
-    .map(([name, count]) => ({ name, count }))
-
-  const realTimeStats = {
-    totalVisitors: recentBotActivity.length,
-    botVisitors: recentBotActivity.filter(v => v.isBot).length,
-    humanVisitors: recentBotActivity.filter(v => !v.isBot).length,
-    verifiedBots: recentBotActivity.filter(v => v.isBot && v.botVerified).length,
-    legitimateBots: recentBotActivity.filter(v => v.isBot && v.botLegitimate).length,
-    maliciousBots: recentBotActivity.filter(v => v.isBot && v.botLegitimate === false).length,
-    botTypeBreakdown: {
-      search_engine: recentBotActivity.filter(v => v.botType === 'search_engine').length,
-      social_crawler: recentBotActivity.filter(v => v.botType === 'social_crawler').length,
-      monitoring: recentBotActivity.filter(v => v.botType === 'monitoring').length,
-      malicious: recentBotActivity.filter(v => v.botType === 'malicious').length,
-      suspicious_human: recentBotActivity.filter(v => v.botType === 'suspicious_human').length,
-      human: recentBotActivity.filter(v => v.botType === 'human').length
-    },
-    topBotNames
-  }
-  
-  return c.json({
-    success: true,
-    domain: domainName,
-    timeRange,
-    botMetrics: analytics.botMetrics || {},
-    realTimeStats,
-    recentBotActivity: recentBotActivity.slice(0, 100),
-    lastUpdate: analytics.lastUpdate || new Date().toISOString()
-  })
-})
-
-// Create test domain for NGINX testing
-app.post('/api/test/create-domain', async (c) => {
-  const domainName = 'test-domain.com'
-  const domainId = Date.now().toString()
-  
-  // Create test domain
-  const domain = {
-    id: domainId,
-    name: domainName,
-    status: 'active',
-    connected: true,
-    addedAt: new Date().toISOString(),
-    lastChecked: new Date().toISOString(),
-    totalRequests: 150,
-    humanRequests: 105,
-    botRequests: 45,
-    traffic: 150,
-    blocked: 15,
-    cleanServed: 90,
-    grayServed: 30,
-    aggressiveServed: 15,
-    lastTrafficUpdate: new Date().toISOString()
-  }
-  
-  domains.set(domainId, domain)
-  
-  // Create default backend config
-  const defaultConfig = {
-    cleanBackend: 'https://clean-server.example.com',
-    grayBackend: 'https://gray-server.example.com', 
-    aggressiveBackend: 'https://aggressive-server.example.com',
-    fallbackBackend: 'https://fallback-server.example.com',
-    healthCheck: {
-      enabled: true,
-      path: '/health',
-      interval: 30
-    },
-    botDetection: {
-      enabled: true,
-      sensitivity: 'medium',
-      blockMalicious: true
-    },
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  }
-  
-  domainBackendConfigs.set(domainId, defaultConfig)
-  
-  return c.json({
-    success: true,
-    message: 'Test domain ve NGINX config oluşturuldu',
-    domain: domain,
-    config: defaultConfig
-  })
-})
-
-// Get NGINX configurations (public for testing)
-app.get('/api/test/nginx-configs', (c) => {
-  const domainList = Array.from(domains.values())
-  const configs = {}
-  
-  domainList.forEach(domain => {
-    configs[domain.id] = {
-      domain: domain,
-      config: getDomainBackendConfig(domain.id)
-    }
-  })
-  
-  return c.json({
-    success: true,
-    domains: configs,
-    totalDomains: domainList.length,
-    lastUpdate: new Date().toISOString()
-  })
-})
-
-// Test bot analytics (public endpoint for testing)
-app.get('/api/test/bot-analytics', (c) => {
-  const mockData = {
-    success: true,
-    domain: 'test-domain.com',
-    timeRange: '24h',
-    realTimeStats: {
-      totalVisitors: 150,
-      botVisitors: 45,
-      humanVisitors: 105,
-      verifiedBots: 35,
-      legitimateBots: 30,
-      maliciousBots: 15,
-      botTypeBreakdown: {
-        search_engine: 20,
-        social_crawler: 15,
-        monitoring: 5,
-        malicious: 15,
-        suspicious_human: 10,
-        human: 105
-      },
-      topBotNames: [
-        { name: 'GoogleBot', count: 15 },
-        { name: 'Facebook External Hit', count: 8 },
-        { name: 'TwitterBot', count: 6 },
-        { name: 'BingBot', count: 4 },
-        { name: 'Python-requests', count: 12 }
-      ]
-    },
-    recentBotActivity: [
-      {
-        timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-        isBot: true,
-        botType: 'search_engine',
-        botName: 'GoogleBot',
-        botVerified: true,
-        botLegitimate: true,
-        botConfidence: 95,
-        ip: '66.249.66.1',
-        country: 'United States',
-        action: 'clean'
-      },
-      {
-        timestamp: new Date(Date.now() - 1000 * 60 * 10).toISOString(),
-        isBot: true,
-        botType: 'malicious',
-        botName: 'Python-requests',
-        botVerified: false,
-        botLegitimate: false,
-        botConfidence: 85,
-        ip: '192.168.1.100',
-        country: 'Unknown',
-        action: 'blocked'
-      },
-      {
-        timestamp: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-        isBot: false,
-        botType: 'human',
-        botName: null,
-        botVerified: false,
-        botLegitimate: true,
-        botConfidence: 0,
-        ip: '203.0.113.1',
-        country: 'Turkey',
-        action: 'clean'
-      }
-    ],
-    lastUpdate: new Date().toISOString()
-  }
-  
-  return c.json(mockData)
-})
-
-// Get advanced bot detection analytics
-app.get('/api/domains/:id/analytics/bots', requireAuth, (c) => {
-  const id = c.req.param('id')
-  const timeRange = c.req.query('timeRange') || '24h'
-  
-  const domain = domains.get(id)
-  if (!domain) {
-    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
-  }
-  
-  const dataManager = getDomainDataManager(domain.name)
-  const analytics = dataManager.data.analytics
-  
-  // Filter recent visitors
-  const now = new Date()
-  const timeRanges = {
-    '1h': 1 * 60 * 60 * 1000,
-    '24h': 24 * 60 * 60 * 1000,
-    '7d': 7 * 24 * 60 * 60 * 1000,
-    '30d': 30 * 24 * 60 * 60 * 1000
-  }
-  
-  const cutoffTime = timeRanges[timeRange] ? new Date(now.getTime() - timeRanges[timeRange]) : null
-  let recentBotActivity = analytics.recentVisitors || []
-  
-  if (cutoffTime) {
-    recentBotActivity = recentBotActivity.filter(v => new Date(v.timestamp) > cutoffTime)
-  }
-  
-  // Calculate top bot names
-  const botCounts = {}
-  recentBotActivity.filter(v => v.isBot && v.botName).forEach(v => {
-    botCounts[v.botName] = (botCounts[v.botName] || 0) + 1
-  })
-  
-  const topBotNames = Object.entries(botCounts)
-    .sort(([,a], [,b]) => b - a)
-    .slice(0, 10)
-    .map(([name, count]) => ({ name, count }))
-
-  const realTimeStats = {
-    totalVisitors: recentBotActivity.length,
-    botVisitors: recentBotActivity.filter(v => v.isBot).length,
-    humanVisitors: recentBotActivity.filter(v => !v.isBot).length,
-    verifiedBots: recentBotActivity.filter(v => v.isBot && v.botVerified).length,
-    legitimateBots: recentBotActivity.filter(v => v.isBot && v.botLegitimate).length,
-    maliciousBots: recentBotActivity.filter(v => v.isBot && v.botLegitimate === false).length,
-    botTypeBreakdown: {
-      search_engine: recentBotActivity.filter(v => v.botType === 'search_engine').length,
-      social_crawler: recentBotActivity.filter(v => v.botType === 'social_crawler').length,
-      monitoring: recentBotActivity.filter(v => v.botType === 'monitoring').length,
-      malicious: recentBotActivity.filter(v => v.botType === 'malicious').length,
-      suspicious_human: recentBotActivity.filter(v => v.botType === 'suspicious_human').length,
-      human: recentBotActivity.filter(v => v.botType === 'human').length
-    },
-    topBotNames
-  }
-  
-  return c.json({
-    success: true,
-    domain: domain.name,
-    timeRange,
-    botMetrics: analytics.botMetrics || {},
-    realTimeStats,
-    recentBotActivity: recentBotActivity.slice(0, 100),
-    lastUpdate: analytics.lastUpdate
-  })
-})
 // Real-time visitor feed (for live dashboard updates)
 app.get('/api/domains/:id/visitors/live', requireAuth, (c) => {
   const id = c.req.param('id')
@@ -4781,222 +3933,6 @@ app.post('/api/traffic/log-enhanced', async (c) => {
     blockReason,
     analytics: dataManager.getAnalyticsSummary().overview
   })
-})
-
-// Advanced Traffic Analytics API
-app.get('/api/traffic/analytics', requireAuth, async (c) => {
-  try {
-    const timeRange = c.req.query('timeRange') || '24h'
-    
-    // Collect analytics from all domains
-    let totalRequests = 0
-    let totalUniqueVisitors = 0
-    let totalBotRequests = 0
-    let totalBlockedRequests = 0
-    let geographicData = {}
-    let deviceData = { types: {}, os: {}, browsers: {} }
-    let recentVisitors = []
-    
-    // Aggregate data from all domains
-    Array.from(domainDataStore.values()).forEach(dataManager => {
-      const analytics = dataManager.data.analytics
-      
-      totalRequests += analytics.totalRequests
-      totalUniqueVisitors += analytics.uniqueVisitors
-      totalBotRequests += analytics.botRequests
-      totalBlockedRequests += analytics.blocked
-      
-      // Merge geographic data
-      Object.entries(analytics.countries).forEach(([country, data]) => {
-        if (!geographicData[country]) {
-          geographicData[country] = { requests: 0, visitors: 0 }
-        }
-        geographicData[country].requests += data.requests || 0
-        geographicData[country].visitors += data.humans || 0
-      })
-      
-      // Add recent visitors
-      recentVisitors.push(...analytics.recentVisitors.slice(-10))
-    })
-    
-    // Calculate percentages for geographic data
-    Object.keys(geographicData).forEach(country => {
-      geographicData[country].percentage = (geographicData[country].requests / totalRequests * 100) || 0
-    })
-    
-    // Generate hourly trends for the time range
-    const trends = []
-    const now = new Date()
-    const hoursToGenerate = timeRange === '1h' ? 1 : timeRange === '24h' ? 24 : timeRange === '7d' ? 168 : 720
-    
-    for (let i = hoursToGenerate - 1; i >= 0; i--) {
-      const hour = new Date(now.getTime() - i * 60 * 60 * 1000)
-      trends.push({
-        hour: hour.getHours(),
-        date: hour.toISOString().split('T')[0],
-        requests: Math.floor(totalRequests / hoursToGenerate * (0.7 + Math.random() * 0.6)),
-        visitors: Math.floor(totalUniqueVisitors / hoursToGenerate * (0.7 + Math.random() * 0.6)),
-        bots: Math.floor(totalBotRequests / hoursToGenerate * (0.7 + Math.random() * 0.6))
-      })
-    }
-    
-    // Generate device data (mock realistic distribution)
-    const mockDevices = {
-      types: { 'Desktop': 45.2, 'Mobile': 38.7, 'Tablet': 12.1, 'Bot': 4.0 },
-      os: { 'Windows': 42.5, 'Android': 28.3, 'iOS': 16.2, 'macOS': 8.7, 'Linux': 4.3 },
-      browsers: { 'Chrome': 65.4, 'Safari': 18.7, 'Firefox': 9.2, 'Edge': 4.1, 'Other': 2.6 }
-    }
-    
-    // Security analysis
-    const securityStats = {
-      threats: [],
-      attackPatterns: {},
-      blockedIPs: [],
-      alertsCount: Math.floor(Math.random() * 5)
-    }
-    
-    // Performance metrics
-    const performanceMetrics = {
-      avgResponseTime: Math.floor(Math.random() * 100) + 80,
-      avgLoadTime: (Math.random() * 2 + 1).toFixed(1),
-      bounceRate: (Math.random() * 30 + 15).toFixed(1),
-      uptime: 99.9
-    }
-    
-    return c.json({
-      success: true,
-      analytics: {
-        statistics: {
-          totalRequests,
-          uniqueVisitors: totalUniqueVisitors,
-          botRequests: totalBotRequests,
-          blockedRequests: totalBlockedRequests,
-          trends
-        },
-        geographic: {
-          countries: geographicData,
-          cities: {
-            'New York': { requests: Math.floor(totalRequests * 0.123), visitors: Math.floor(totalUniqueVisitors * 0.115) },
-            'London': { requests: Math.floor(totalRequests * 0.089), visitors: Math.floor(totalUniqueVisitors * 0.092) },
-            'Tokyo': { requests: Math.floor(totalRequests * 0.067), visitors: Math.floor(totalUniqueVisitors * 0.071) }
-          }
-        },
-        devices: mockDevices,
-        sources: {
-          referrers: {
-            'google.com': 28.3,
-            'facebook.com': 12.1,
-            'twitter.com': 8.7,
-            'direct': 45.2,
-            'other': 5.7
-          },
-          searchEngines: {
-            'Google': 67.2,
-            'Bing': 18.4,
-            'DuckDuckGo': 8.1,
-            'Yahoo': 4.2,
-            'Other': 2.1
-          }
-        },
-        security: securityStats,
-        performance: performanceMetrics,
-        realTimeVisitors: recentVisitors.slice(-20).map(visitor => ({
-          ...visitor,
-          timestamp: new Date(visitor.timestamp),
-          isBot: visitor.isBot || false
-        })),
-        timeRange,
-        lastUpdated: new Date().toISOString()
-      }
-    })
-  } catch (error) {
-    return c.json({ 
-      success: false, 
-      message: 'Traffic analytics yüklenirken hata oluştu: ' + error.message 
-    }, 500)
-  }
-})
-
-// DNS Records Management API
-app.get('/api/dns/records', requireAuth, async (c) => {
-  try {
-    // Collect DNS records from all domains
-    const allRecords = []
-    
-    Array.from(dnsRecords.entries()).forEach(([recordId, record]) => {
-      allRecords.push({
-        id: recordId,
-        ...record,
-        // Add computed fields
-        health: record.status === 'active' ? (Math.random() > 0.1 ? 'healthy' : 'checking') : 'unhealthy',
-        queries: Math.floor(Math.random() * 10000) + 100,
-        zone: record.domain || 'example.com'
-      })
-    })
-    
-    // Add some mock records if none exist
-    if (allRecords.length === 0) {
-      const mockRecords = [
-        {
-          id: 'mock_1',
-          name: '@',
-          type: 'A',
-          value: '192.168.1.100',
-          ttl: 300,
-          provider: 'CLOUDFLARE',
-          status: 'active',
-          health: 'healthy',
-          queries: 8547,
-          zone: 'example.com',
-          domain: 'example.com',
-          created: new Date().toISOString()
-        },
-        {
-          id: 'mock_2',
-          name: 'www',
-          type: 'CNAME',
-          value: 'example.com',
-          ttl: 3600,
-          provider: 'CLOUDFLARE',
-          status: 'active',
-          health: 'healthy',
-          queries: 5234,
-          zone: 'example.com',
-          domain: 'example.com',
-          created: new Date().toISOString()
-        },
-        {
-          id: 'mock_3',
-          name: 'mail',
-          type: 'MX',
-          value: '10 mail.example.com',
-          ttl: 1800,
-          provider: 'ROUTE53',
-          status: 'pending',
-          health: 'checking',
-          queries: 892,
-          zone: 'example.com',
-          domain: 'example.com',
-          created: new Date().toISOString()
-        }
-      ]
-      
-      allRecords.push(...mockRecords)
-    }
-    
-    return c.json({
-      success: true,
-      records: allRecords,
-      total: allRecords.length,
-      providers: [...new Set(allRecords.map(r => r.provider))],
-      recordTypes: [...new Set(allRecords.map(r => r.type))]
-    })
-  } catch (error) {
-    return c.json({ 
-      success: false, 
-      message: 'DNS kayıtları yüklenirken hata oluştu: ' + error.message 
-    }, 500)
-  }
 })
 
 // Real-time domain statistics API
@@ -5823,7 +4759,7 @@ app.post('/api/dns', requireAuth, async (c) => {
       name: name || '@',
       type: type.toUpperCase(),
       value,
-      ttl: Math.max(1, Math.min(ttl || 3600, 2147483647)), // TTL range: 1-2147483647 seconds
+      ttl: ttl || 3600,
       priority: type === 'MX' ? priority : null,
       provider: provider || 'CUSTOM',
       status: 'pending',
@@ -6537,19 +5473,8 @@ app.get('/', (c) => {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Traffic Management Platform</title>
         <script>
-          // Suppress Tailwind production warning and console errors
+          // Suppress Tailwind production warning
           window.process = { env: { NODE_ENV: 'development' } };
-          
-          // Suppress console warnings in production
-          if (window.location.hostname !== 'localhost') {
-            const originalWarn = console.warn;
-            console.warn = function(...args) {
-              if (args[0] && args[0].includes && args[0].includes('cdn.tailwindcss.com')) {
-                return; // Suppress Tailwind CDN warning
-              }
-              originalWarn.apply(console, args);
-            };
-          }
         </script>
         <script src="https://cdn.tailwindcss.com"></script>
         <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
@@ -7226,19 +6151,8 @@ app.get('/dashboard', (c) => {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Traffic Management - Dashboard</title>
         <script>
-          // Suppress Tailwind production warning and console errors
+          // Suppress Tailwind production warning
           window.process = { env: { NODE_ENV: 'development' } };
-          
-          // Suppress console warnings in production
-          if (window.location.hostname !== 'localhost') {
-            const originalWarn = console.warn;
-            console.warn = function(...args) {
-              if (args[0] && args[0].includes && args[0].includes('cdn.tailwindcss.com')) {
-                return; // Suppress Tailwind CDN warning
-              }
-              originalWarn.apply(console, args);
-            };
-          }
         </script>
         <script src="https://cdn.tailwindcss.com"></script>
         <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
@@ -7276,13 +6190,9 @@ app.get('/dashboard', (c) => {
                                 class="nav-btn px-4 py-2 rounded-lg transition-colors">
                             <i class="fas fa-lock mr-2"></i>Güvenlik
                         </button>
-                        <button onclick="showSection('deploy')" id="btn-deploy"
-                                class="nav-btn px-4 py-2 rounded-lg transition-colors">
-                            <i class="fas fa-rocket mr-2"></i>Deploy
-                        </button>
                         <button onclick="showSection('settings')" id="btn-settings"
                                 class="nav-btn px-4 py-2 rounded-lg transition-colors">
-                            <i class="fas fa-cog mr-2"></i>Ayarlar
+                            <i class="fas fa-rocket mr-2"></i>Deploy
                         </button>
                         <button onclick="logout()" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors">
                             <i class="fas fa-sign-out-alt mr-2"></i>Çıkış
@@ -7315,440 +6225,154 @@ app.get('/dashboard', (c) => {
 
             <!-- Traffic Analysis Section -->
             <div id="section-traffic" class="section hidden">
-                <!-- Header Section -->
-                <div class="bg-gray-800 rounded-lg p-6 mb-6">
+                <div class="bg-gray-800 rounded-lg p-6">
                     <div class="flex justify-between items-center mb-6">
                         <h2 class="text-2xl font-bold">
                             <i class="fas fa-chart-line mr-2 text-green-400"></i>
-                            Advanced Traffic Analytics & Visitor Intelligence
+                            Traffic Analysis & Visitor Management
                         </h2>
                         <div class="flex space-x-3">
-                            <select id="traffic-time-range" class="bg-gray-700 border border-gray-600 rounded px-3 py-2">
-                                <option value="1h">Son 1 Saat</option>
-                                <option value="24h" selected>Son 24 Saat</option>
-                                <option value="7d">Son 7 Gün</option>
-                                <option value="30d">Son 30 Gün</option>
-                            </select>
-                            <button onclick="exportTrafficData()" 
-                                    class="bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg font-medium">
-                                <i class="fas fa-download mr-2"></i>Export
-                            </button>
                             <button onclick="loadTrafficData()" 
                                     class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg font-medium">
-                                <i class="fas fa-sync-alt mr-2"></i>Refresh
+                                <i class="fas fa-sync-alt mr-2"></i>Refresh Data
                             </button>
                         </div>
                     </div>
-
-                    <!-- Real-time Statistics Dashboard -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                        <div class="bg-gradient-to-br from-blue-500 to-blue-600 p-4 rounded-lg text-white">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <p class="text-blue-100 text-sm">Total Requests</p>
-                                    <p class="text-3xl font-bold" id="traffic-total-requests">0</p>
-                                    <p class="text-blue-200 text-xs">
-                                        <span id="traffic-requests-trend">+0%</span> vs yesterday
-                                    </p>
+                    
+                    <!-- Phase 1 Features Overview -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                        <!-- IP Management Overview -->
+                        <div class="bg-gray-700 p-6 rounded-lg border-l-4 border-purple-500">
+                            <h3 class="text-xl font-bold text-purple-300 mb-4 flex items-center">
+                                <i class="fas fa-shield-alt mr-3"></i>
+                                Per-Domain IP Management
+                            </h3>
+                            <p class="text-gray-300 mb-4">
+                                Control access with whitelist, blacklist, and graylist rules. 
+                                Each domain has its own IP security configuration.
+                            </p>
+                            <div class="space-y-2 text-sm text-gray-400 mb-4">
+                                <div class="flex items-center">
+                                    <i class="fas fa-check-circle text-green-400 mr-2"></i>
+                                    <span>Whitelist: Always allow trusted IPs</span>
                                 </div>
-                                <div class="bg-blue-400 bg-opacity-30 p-3 rounded-full">
-                                    <i class="fas fa-chart-bar text-2xl"></i>
+                                <div class="flex items-center">
+                                    <i class="fas fa-ban text-red-400 mr-2"></i>
+                                    <span>Blacklist: Always block malicious IPs</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-exclamation-triangle text-yellow-400 mr-2"></i>
+                                    <span>Graylist: Monitor suspicious IPs</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-layer-group text-blue-400 mr-2"></i>
+                                    <span>Bulk operations for IP ranges</span>
                                 </div>
                             </div>
+                            <p class="text-xs text-gray-500">
+                                Click the purple shield button on any domain to manage its IP rules.
+                            </p>
                         </div>
-
-                        <div class="bg-gradient-to-br from-green-500 to-green-600 p-4 rounded-lg text-white">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <p class="text-green-100 text-sm">Unique Visitors</p>
-                                    <p class="text-3xl font-bold" id="traffic-unique-visitors">0</p>
-                                    <p class="text-green-200 text-xs">
-                                        <span id="traffic-visitors-trend">+0%</span> vs yesterday
-                                    </p>
+                        
+                        <!-- Analytics Overview -->
+                        <div class="bg-gray-700 p-6 rounded-lg border-l-4 border-green-500">
+                            <h3 class="text-xl font-bold text-green-300 mb-4 flex items-center">
+                                <i class="fas fa-chart-bar mr-3"></i>
+                                Advanced Visitor Analytics
+                            </h3>
+                            <p class="text-gray-300 mb-4">
+                                Real-time visitor tracking with comprehensive analytics. 
+                                Monitor human vs bot traffic, geographic distribution, and content serving patterns.
+                            </p>
+                            <div class="space-y-2 text-sm text-gray-400 mb-4">
+                                <div class="flex items-center">
+                                    <i class="fas fa-users text-blue-400 mr-2"></i>
+                                    <span>Human vs Bot traffic analysis</span>
                                 </div>
-                                <div class="bg-green-400 bg-opacity-30 p-3 rounded-full">
-                                    <i class="fas fa-users text-2xl"></i>
+                                <div class="flex items-center">
+                                    <i class="fas fa-globe text-cyan-400 mr-2"></i>
+                                    <span>Geographic visitor distribution</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-external-link-alt text-orange-400 mr-2"></i>
+                                    <span>Referrer source tracking</span>
+                                </div>
+                                <div class="flex items-center">
+                                    <i class="fas fa-clock text-pink-400 mr-2"></i>
+                                    <span>Real-time visitor activity feed</span>
                                 </div>
                             </div>
+                            <p class="text-xs text-gray-500">
+                                Click the green chart button on any domain to view its analytics dashboard.
+                            </p>
                         </div>
-
-                        <div class="bg-gradient-to-br from-purple-500 to-purple-600 p-4 rounded-lg text-white">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <p class="text-purple-100 text-sm">Bot Traffic</p>
-                                    <p class="text-3xl font-bold" id="traffic-bot-requests">0</p>
-                                    <p class="text-purple-200 text-xs">
-                                        <span id="traffic-bot-percentage">0%</span> of total
-                                    </p>
-                                </div>
-                                <div class="bg-purple-400 bg-opacity-30 p-3 rounded-full">
-                                    <i class="fas fa-robot text-2xl"></i>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="bg-gradient-to-br from-red-500 to-red-600 p-4 rounded-lg text-white">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <p class="text-red-100 text-sm">Blocked Requests</p>
-                                    <p class="text-3xl font-bold" id="traffic-blocked-requests">0</p>
-                                    <p class="text-red-200 text-xs">
-                                        <span id="traffic-block-rate">0%</span> block rate
-                                    </p>
-                                </div>
-                                <div class="bg-red-400 bg-opacity-30 p-3 rounded-full">
-                                    <i class="fas fa-shield-alt text-2xl"></i>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Advanced Analytics Tabs -->
-                <div class="bg-gray-800 rounded-lg p-6 mb-6">
-                    <div class="flex border-b border-gray-700 mb-6">
-                        <button onclick="showTrafficTab('overview')" id="traffic-tab-overview" 
-                                class="traffic-tab-btn px-4 py-2 font-medium rounded-t-lg border-b-2 border-green-400 bg-gray-700 text-green-400">
-                            <i class="fas fa-tachometer-alt mr-2"></i>Overview
-                        </button>
-                        <button onclick="showTrafficTab('realtime')" id="traffic-tab-realtime" 
-                                class="traffic-tab-btn px-4 py-2 font-medium text-gray-400 hover:text-white">
-                            <i class="fas fa-broadcast-tower mr-2"></i>Real-time
-                        </button>
-                        <button onclick="showTrafficTab('geographic')" id="traffic-tab-geographic" 
-                                class="traffic-tab-btn px-4 py-2 font-medium text-gray-400 hover:text-white">
-                            <i class="fas fa-globe-americas mr-2"></i>Geographic
-                        </button>
-                        <button onclick="showTrafficTab('devices')" id="traffic-tab-devices" 
-                                class="traffic-tab-btn px-4 py-2 font-medium text-gray-400 hover:text-white">
-                            <i class="fas fa-mobile-alt mr-2"></i>Devices
-                        </button>
-                        <button onclick="showTrafficTab('sources')" id="traffic-tab-sources" 
-                                class="traffic-tab-btn px-4 py-2 font-medium text-gray-400 hover:text-white">
-                            <i class="fas fa-external-link-alt mr-2"></i>Sources
-                        </button>
-                        <button onclick="showTrafficTab('behavior')" id="traffic-tab-behavior" 
-                                class="traffic-tab-btn px-4 py-2 font-medium text-gray-400 hover:text-white">
-                            <i class="fas fa-user-check mr-2"></i>Behavior
-                        </button>
-                        <button onclick="showTrafficTab('security')" id="traffic-tab-security" 
-                                class="traffic-tab-btn px-4 py-2 font-medium text-gray-400 hover:text-white">
-                            <i class="fas fa-shield-alt mr-2"></i>Security
-                        </button>
-                    </div>
-
-                    <!-- Overview Tab -->
-                    <div id="traffic-tab-content-overview" class="traffic-tab-content">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <!-- Traffic Trends Chart -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 flex items-center">
-                                    <i class="fas fa-chart-line mr-2 text-green-400"></i>
-                                    Traffic Trends
-                                </h3>
-                                <div id="traffic-trends-chart" class="h-64 flex items-center justify-center border border-gray-600 rounded">
-                                    <div class="text-center text-gray-400">
-                                        <i class="fas fa-chart-line text-4xl mb-2"></i>
-                                        <p>Traffic trend chart will appear here</p>
-                                        <p class="text-sm">Real-time data visualization</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Top Pages -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 flex items-center">
-                                    <i class="fas fa-file-alt mr-2 text-blue-400"></i>
-                                    Top Pages
-                                </h3>
-                                <div id="traffic-top-pages" class="space-y-3 max-h-64 overflow-y-auto">
-                                    <!-- Dynamic content -->
-                                </div>
-                            </div>
-
-                            <!-- Bot Analysis -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 flex items-center">
-                                    <i class="fas fa-robot mr-2 text-purple-400"></i>
-                                    Bot Traffic Analysis
-                                </h3>
-                                <div id="traffic-bot-analysis" class="space-y-3">
-                                    <!-- Dynamic content -->
-                                </div>
-                            </div>
-
-                            <!-- Performance Metrics -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 flex items-center">
-                                    <i class="fas fa-stopwatch mr-2 text-yellow-400"></i>
-                                    Performance Metrics
-                                </h3>
-                                <div id="traffic-performance-metrics" class="space-y-3">
-                                    <!-- Dynamic content -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Real-time Tab -->
-                    <div id="traffic-tab-content-realtime" class="traffic-tab-content hidden">
-                        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                            <!-- Live Visitors -->
-                            <div class="xl:col-span-2 bg-gray-700 p-4 rounded-lg">
-                                <div class="flex justify-between items-center mb-4">
-                                    <h3 class="text-lg font-semibold flex items-center">
-                                        <i class="fas fa-eye mr-2 text-green-400"></i>
-                                        Live Visitors
-                                    </h3>
-                                    <div class="flex items-center text-green-400">
-                                        <div class="w-2 h-2 bg-green-400 rounded-full animate-pulse mr-2"></div>
-                                        <span id="live-visitor-count">0</span> online
-                                    </div>
-                                </div>
-                                <div id="live-visitors-list" class="space-y-2 max-h-96 overflow-y-auto">
-                                    <!-- Dynamic real-time visitor entries -->
-                                </div>
-                            </div>
-
-                            <!-- Real-time Stats -->
-                            <div class="space-y-4">
-                                <div class="bg-gray-700 p-4 rounded-lg">
-                                    <h4 class="font-semibold mb-3 flex items-center">
-                                        <i class="fas fa-clock mr-2 text-blue-400"></i>
-                                        Real-time Stats
-                                    </h4>
-                                    <div class="space-y-2 text-sm">
-                                        <div class="flex justify-between">
-                                            <span>Active Sessions:</span>
-                                            <span id="realtime-active-sessions" class="text-green-400 font-bold">0</span>
-                                        </div>
-                                        <div class="flex justify-between">
-                                            <span>Requests/min:</span>
-                                            <span id="realtime-requests-per-min" class="text-blue-400 font-bold">0</span>
-                                        </div>
-                                        <div class="flex justify-between">
-                                            <span>Avg. Response Time:</span>
-                                            <span id="realtime-avg-response" class="text-yellow-400 font-bold">0ms</span>
-                                        </div>
-                                        <div class="flex justify-between">
-                                            <span>Bot Detection:</span>
-                                            <span id="realtime-bot-rate" class="text-purple-400 font-bold">0%</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="bg-gray-700 p-4 rounded-lg">
-                                    <h4 class="font-semibold mb-3 flex items-center">
-                                        <i class="fas fa-chart-pie mr-2 text-indigo-400"></i>
-                                        Traffic Sources
-                                    </h4>
-                                    <div id="realtime-traffic-sources" class="space-y-2">
-                                        <!-- Dynamic source breakdown -->
-                                    </div>
-                                </div>
-
-                                <div class="bg-gray-700 p-4 rounded-lg">
-                                    <h4 class="font-semibold mb-3 flex items-center">
-                                        <i class="fas fa-exclamation-triangle mr-2 text-red-400"></i>
-                                        Security Alerts
-                                    </h4>
-                                    <div id="realtime-security-alerts" class="space-y-2 max-h-32 overflow-y-auto">
-                                        <!-- Dynamic security alerts -->
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Geographic Tab -->
-                    <div id="traffic-tab-content-geographic" class="traffic-tab-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <!-- World Map Visualization -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 flex items-center">
-                                    <i class="fas fa-globe mr-2 text-blue-400"></i>
-                                    Global Traffic Distribution
-                                </h3>
-                                <div id="geographic-world-map" class="h-80 flex items-center justify-center border border-gray-600 rounded">
-                                    <div class="text-center text-gray-400">
-                                        <i class="fas fa-globe text-6xl mb-4"></i>
-                                        <p>Interactive world map</p>
-                                        <p class="text-sm">Showing visitor distribution by country</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Country Statistics -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 flex items-center">
-                                    <i class="fas fa-flag mr-2 text-green-400"></i>
-                                    Top Countries
-                                </h3>
-                                <div id="geographic-country-stats" class="space-y-3 max-h-80 overflow-y-auto">
-                                    <!-- Dynamic country statistics -->
-                                </div>
-                            </div>
-
-                            <!-- City Analysis -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 flex items-center">
-                                    <i class="fas fa-city mr-2 text-purple-400"></i>
-                                    Top Cities
-                                </h3>
-                                <div id="geographic-city-stats" class="space-y-3 max-h-80 overflow-y-auto">
-                                    <!-- Dynamic city statistics -->
-                                </div>
-                            </div>
-
-                            <!-- Regional Performance -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 flex items-center">
-                                    <i class="fas fa-tachometer-alt mr-2 text-yellow-400"></i>
-                                    Regional Performance
-                                </h3>
-                                <div id="geographic-performance-stats" class="space-y-3">
-                                    <!-- Dynamic regional performance -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Other tabs content will be continued... -->
-                    <div id="traffic-tab-content-devices" class="traffic-tab-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Device Types</h3>
-                                <div id="device-types-chart" class="h-48 flex items-center justify-center border border-gray-600 rounded">
-                                    <div class="text-center text-gray-400">
-                                        <i class="fas fa-mobile-alt text-4xl mb-2"></i>
-                                        <p>Device breakdown chart</p>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Operating Systems</h3>
-                                <div id="os-stats" class="space-y-2">
-                                    <!-- Dynamic OS stats -->
-                                </div>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Browsers</h3>
-                                <div id="browser-stats" class="space-y-2">
-                                    <!-- Dynamic browser stats -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="traffic-tab-content-sources" class="traffic-tab-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Referrer Sources</h3>
-                                <div id="referrer-stats" class="space-y-2">
-                                    <!-- Dynamic referrer stats -->
-                                </div>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Search Engines</h3>
-                                <div id="search-engine-stats" class="space-y-2">
-                                    <!-- Dynamic search engine stats -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="traffic-tab-content-behavior" class="traffic-tab-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">User Flow</h3>
-                                <div id="user-flow-chart" class="h-64 flex items-center justify-center border border-gray-600 rounded">
-                                    <div class="text-center text-gray-400">
-                                        <i class="fas fa-route text-4xl mb-2"></i>
-                                        <p>User journey visualization</p>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Session Duration</h3>
-                                <div id="session-duration-stats" class="space-y-2">
-                                    <!-- Dynamic session stats -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="traffic-tab-content-security" class="traffic-tab-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Threat Analysis</h3>
-                                <div id="threat-analysis" class="space-y-2">
-                                    <!-- Dynamic threat analysis -->
-                                </div>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Attack Patterns</h3>
-                                <div id="attack-patterns" class="space-y-2">
-                                    <!-- Dynamic attack patterns -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Advanced Filters and Controls -->
-                <div class="bg-gray-800 rounded-lg p-6">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-lg font-semibold flex items-center">
-                            <i class="fas fa-filter mr-2 text-blue-400"></i>
-                            Advanced Filtering & Segmentation
-                        </h3>
-                        <button onclick="resetTrafficFilters()" class="text-sm text-gray-400 hover:text-white">
-                            <i class="fas fa-undo mr-1"></i>Reset Filters
-                        </button>
                     </div>
                     
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">Domain Filter</label>
-                            <select id="traffic-filter-domain" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2">
-                                <option value="">All Domains</option>
-                                <!-- Dynamic domain options -->
-                            </select>
+                    <!-- Implementation Status -->
+                    <div class="bg-gray-700 p-4 rounded-lg mb-6">
+                        <h4 class="text-lg font-semibold text-white mb-4 flex items-center">
+                            <i class="fas fa-tasks text-blue-400 mr-2"></i>
+                            Phase 1 Implementation Status
+                        </h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            <div class="flex items-center space-x-2">
+                                <i class="fas fa-check-circle text-green-400"></i>
+                                <span class="text-gray-300">JSON Data Storage</span>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <i class="fas fa-check-circle text-green-400"></i>
+                                <span class="text-gray-300">Per-Domain IP Rules</span>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <i class="fas fa-check-circle text-green-400"></i>
+                                <span class="text-gray-300">Visitor Analytics</span>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <i class="fas fa-check-circle text-green-400"></i>
+                                <span class="text-gray-300">Real-time Tracking</span>
+                            </div>
                         </div>
-                        
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">Traffic Type</label>
-                            <select id="traffic-filter-type" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2">
-                                <option value="">All Traffic</option>
-                                <option value="human">Human Only</option>
-                                <option value="bot">Bot Only</option>
-                                <option value="verified_bot">Verified Bots</option>
-                                <option value="suspicious">Suspicious</option>
-                            </select>
-                        </div>
-                        
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">Geographic Region</label>
-                            <select id="traffic-filter-region" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2">
-                                <option value="">All Regions</option>
-                                <option value="NA">North America</option>
-                                <option value="EU">Europe</option>
-                                <option value="AS">Asia</option>
-                                <option value="SA">South America</option>
-                                <option value="AF">Africa</option>
-                                <option value="OC">Oceania</option>
-                            </select>
-                        </div>
-                        
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-2">Device Category</label>
-                            <select id="traffic-filter-device" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2">
-                                <option value="">All Devices</option>
-                                <option value="desktop">Desktop</option>
-                                <option value="mobile">Mobile</option>
-                                <option value="tablet">Tablet</option>
-                                <option value="bot">Bot/Crawler</option>
-                            </select>
+                    </div>
+                    
+                    <!-- Next Phases Preview -->
+                    <div class="bg-gray-700 p-4 rounded-lg">
+                        <h4 class="text-lg font-semibold text-white mb-4 flex items-center">
+                            <i class="fas fa-road text-yellow-400 mr-2"></i>
+                            Upcoming Features (Next Phases)
+                        </h4>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <!-- Phase 2 -->
+                            <div class="bg-gray-600 p-3 rounded">
+                                <h5 class="font-semibold text-cyan-400 mb-2">Phase 2: Geographic & Time Controls</h5>
+                                <ul class="text-sm text-gray-300 space-y-1">
+                                    <li>• Country-based access control</li>
+                                    <li>• Time-based access rules</li>
+                                    <li>• Business hours restrictions</li>
+                                    <li>• Holiday blocking</li>
+                                </ul>
+                            </div>
+                            
+                            <!-- Phase 3 -->
+                            <div class="bg-gray-600 p-3 rounded">
+                                <h5 class="font-semibold text-orange-400 mb-2">Phase 3: Campaign & Rate Limiting</h5>
+                                <ul class="text-sm text-gray-300 space-y-1">
+                                    <li>• UTM campaign tracking</li>
+                                    <li>• Source attribution</li>
+                                    <li>• Advanced rate limiting</li>
+                                    <li>• Per-IP rate rules</li>
+                                </ul>
+                            </div>
+                            
+                            <!-- Phase 4 -->
+                            <div class="bg-gray-600 p-3 rounded">
+                                <h5 class="font-semibold text-purple-400 mb-2">Phase 4: Video Delivery System</h5>
+                                <ul class="text-sm text-gray-300 space-y-1">
+                                    <li>• Single-view video tracking</li>
+                                    <li>• Multi-storage detection</li>
+                                    <li>• Video analytics</li>
+                                    <li>• Encrypted delivery</li>
+                                </ul>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -7763,10 +6387,6 @@ app.get('/dashboard', (c) => {
                             NGINX Multi-Domain Konfigürasyonu
                         </h2>
                         <div class="flex space-x-3">
-                            <button onclick="createTestDomainForNginx()" 
-                                    class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg font-medium">
-                                <i class="fas fa-flask mr-2"></i>Test Domain Oluştur
-                            </button>
                             <button onclick="refreshDomainConfigs()" 
                                     class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">
                                 <i class="fas fa-sync-alt mr-2"></i>Yenile
@@ -7928,8 +6548,18 @@ app.get('/dashboard', (c) => {
                         </div>
                         <div class="bg-black p-4 rounded border font-mono text-xs overflow-auto max-h-96">
                             <pre id="advanced-nginx-config-preview" class="text-green-400 whitespace-pre-wrap">
-# NGINX Configuration
-# "Config Oluştur" butonuna tıklayın
+# Multi-Domain NGINX Configuration
+# Generated configuration will appear here after clicking "Config Oluştur"
+# 
+# Features:
+# - Per-domain backend routing
+# - Advanced bot detection with Lua
+# - Rate limiting and DDoS protection
+# - Traffic analytics and monitoring
+# - Facebook referrer detection
+# - Geographic routing support
+# 
+# Click "Config Oluştur" to generate configuration for all domains
                             </pre>
                         </div>
                     </div>
@@ -7958,471 +6588,79 @@ app.get('/dashboard', (c) => {
 
             <!-- DNS Management Section -->
             <div id="section-dns" class="section hidden">
-                <!-- Header Section -->
-                <div class="bg-gray-800 rounded-lg p-6 mb-6">
+                <div class="bg-gray-800 rounded-lg p-6">
                     <div class="flex justify-between items-center mb-6">
                         <h2 class="text-2xl font-bold">
                             <i class="fas fa-network-wired mr-2 text-purple-400"></i>
-                            Advanced DNS Management
+                            DNS Yönetimi
                         </h2>
                         
                         <div class="flex space-x-3">
-                            <select id="dns-zone-selector" class="bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white">
-                                <option value="">Select Zone</option>
-                                <!-- Dynamic zone options -->
-                            </select>
-                            <button onclick="showDNSWizard()" 
-                                    class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg font-medium">
-                                <i class="fas fa-magic mr-2"></i>DNS Wizard
-                            </button>
                             <button onclick="showDNSAddModal()" 
-                                    class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg font-medium">
-                                <i class="fas fa-plus mr-2"></i>Add Record
+                                    class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg font-medium">
+                                <i class="fas fa-plus mr-2"></i>DNS Kaydı Ekle
                             </button>
-                            <button onclick="importDNSRecords()" 
+                            <button onclick="bulkDNSOperations()" 
                                     class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">
-                                <i class="fas fa-upload mr-2"></i>Import
+                                <i class="fas fa-layer-group mr-2"></i>Toplu İşlem
                             </button>
-                            <button onclick="exportDNSRecords()" 
-                                    class="bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg font-medium">
-                                <i class="fas fa-download mr-2"></i>Export
+                            <button onclick="refreshDNSRecords()" 
+                                    class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg font-medium">
+                                <i class="fas fa-sync-alt mr-2"></i>Yenile
                             </button>
                         </div>
                     </div>
 
-                    <!-- Enhanced DNS Statistics Dashboard -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-                        <div class="bg-gradient-to-br from-purple-500 to-purple-600 p-4 rounded-lg text-white">
+                    <!-- DNS Statistics Cards -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                        <div class="bg-gray-700 p-4 rounded-lg">
                             <div class="flex items-center justify-between">
                                 <div>
-                                    <p class="text-purple-100 text-sm">Total Records</p>
-                                    <p class="text-3xl font-bold" id="dns-total-records">0</p>
-                                    <p class="text-purple-200 text-xs">
-                                        <span id="dns-records-trend">+0</span> this month
-                                    </p>
+                                    <p class="text-gray-300 text-sm">Toplam Kayıt</p>
+                                    <p class="text-2xl font-bold text-purple-400" id="dns-total-records">0</p>
                                 </div>
-                                <div class="bg-purple-400 bg-opacity-30 p-3 rounded-full">
-                                    <i class="fas fa-list text-2xl"></i>
+                                <div class="bg-purple-500 bg-opacity-20 p-3 rounded-full">
+                                    <i class="fas fa-list text-purple-400"></i>
                                 </div>
                             </div>
                         </div>
                         
-                        <div class="bg-gradient-to-br from-green-500 to-green-600 p-4 rounded-lg text-white">
+                        <div class="bg-gray-700 p-4 rounded-lg">
                             <div class="flex items-center justify-between">
                                 <div>
-                                    <p class="text-green-100 text-sm">Active Records</p>
-                                    <p class="text-3xl font-bold" id="dns-active-records">0</p>
-                                    <p class="text-green-200 text-xs">
-                                        <span id="dns-health-score">98.5%</span> health score
-                                    </p>
+                                    <p class="text-gray-300 text-sm">Aktif Kayıt</p>
+                                    <p class="text-2xl font-bold text-green-400" id="dns-active-records">0</p>
                                 </div>
-                                <div class="bg-green-400 bg-opacity-30 p-3 rounded-full">
-                                    <i class="fas fa-check-circle text-2xl"></i>
+                                <div class="bg-green-500 bg-opacity-20 p-3 rounded-full">
+                                    <i class="fas fa-check-circle text-green-400"></i>
                                 </div>
                             </div>
                         </div>
                         
-                        <div class="bg-gradient-to-br from-yellow-500 to-yellow-600 p-4 rounded-lg text-white">
+                        <div class="bg-gray-700 p-4 rounded-lg">
                             <div class="flex items-center justify-between">
                                 <div>
-                                    <p class="text-yellow-100 text-sm">Propagating</p>
-                                    <p class="text-3xl font-bold" id="dns-propagating-records">0</p>
-                                    <p class="text-yellow-200 text-xs">
-                                        <span id="dns-avg-propagation">~15min</span> avg time
-                                    </p>
+                                    <p class="text-gray-300 text-sm">Propagation</p>
+                                    <p class="text-2xl font-bold text-yellow-400" id="dns-propagating-records">0</p>
                                 </div>
-                                <div class="bg-yellow-400 bg-opacity-30 p-3 rounded-full">
-                                    <i class="fas fa-clock text-2xl"></i>
+                                <div class="bg-yellow-500 bg-opacity-20 p-3 rounded-full">
+                                    <i class="fas fa-hourglass-half text-yellow-400"></i>
                                 </div>
                             </div>
                         </div>
                         
-                        <div class="bg-gradient-to-br from-blue-500 to-blue-600 p-4 rounded-lg text-white">
+                        <div class="bg-gray-700 p-4 rounded-lg">
                             <div class="flex items-center justify-between">
                                 <div>
-                                    <p class="text-blue-100 text-sm">Providers</p>
-                                    <p class="text-3xl font-bold" id="dns-providers-count">0</p>
-                                    <p class="text-blue-200 text-xs">
-                                        <span id="dns-provider-uptime">99.9%</span> uptime
-                                    </p>
+                                    <p class="text-gray-300 text-sm">Sağlayıcı</p>
+                                    <p class="text-2xl font-bold text-blue-400" id="dns-providers-count">0</p>
                                 </div>
-                                <div class="bg-blue-400 bg-opacity-30 p-3 rounded-full">
-                                    <i class="fas fa-cloud text-2xl"></i>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="bg-gradient-to-br from-red-500 to-red-600 p-4 rounded-lg text-white">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <p class="text-red-100 text-sm">Query Rate</p>
-                                    <p class="text-3xl font-bold" id="dns-query-rate">0</p>
-                                    <p class="text-red-200 text-xs">
-                                        queries/sec
-                                    </p>
-                                </div>
-                                <div class="bg-red-400 bg-opacity-30 p-3 rounded-full">
-                                    <i class="fas fa-tachometer-alt text-2xl"></i>
+                                <div class="bg-blue-500 bg-opacity-20 p-3 rounded-full">
+                                    <i class="fas fa-cloud text-blue-400"></i>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
-
-                <!-- DNS Management Tabs -->
-                <div class="bg-gray-800 rounded-lg p-6 mb-6">
-                    <div class="flex border-b border-gray-700 mb-6">
-                        <button onclick="showDNSTab('records')" id="dns-tab-records" 
-                                class="dns-tab-btn px-4 py-2 font-medium rounded-t-lg border-b-2 border-purple-400 bg-gray-700 text-purple-400">
-                            <i class="fas fa-database mr-2"></i>Records
-                        </button>
-                        <button onclick="showDNSTab('zones')" id="dns-tab-zones" 
-                                class="dns-tab-btn px-4 py-2 font-medium text-gray-400 hover:text-white">
-                            <i class="fas fa-sitemap mr-2"></i>Zones
-                        </button>
-                        <button onclick="showDNSTab('analytics')" id="dns-tab-analytics" 
-                                class="dns-tab-btn px-4 py-2 font-medium text-gray-400 hover:text-white">
-                            <i class="fas fa-chart-line mr-2"></i>Analytics
-                        </button>
-                        <button onclick="showDNSTab('security')" id="dns-tab-security" 
-                                class="dns-tab-btn px-4 py-2 font-medium text-gray-400 hover:text-white">
-                            <i class="fas fa-shield-alt mr-2"></i>Security
-                        </button>
-                        <button onclick="showDNSTab('health')" id="dns-tab-health" 
-                                class="dns-tab-btn px-4 py-2 font-medium text-gray-400 hover:text-white">
-                            <i class="fas fa-heartbeat mr-2"></i>Health Checks
-                        </button>
-                        <button onclick="showDNSTab('geodns')" id="dns-tab-geodns" 
-                                class="dns-tab-btn px-4 py-2 font-medium text-gray-400 hover:text-white">
-                            <i class="fas fa-globe mr-2"></i>GeoDNS
-                        </button>
-                        <button onclick="showDNSTab('tools')" id="dns-tab-tools" 
-                                class="dns-tab-btn px-4 py-2 font-medium text-gray-400 hover:text-white">
-                            <i class="fas fa-tools mr-2"></i>Tools
-                        </button>
-                    </div>
-
-                    <!-- DNS Records Tab -->
-                    <div id="dns-tab-content-records" class="dns-tab-content">
-                        <!-- Advanced Filtering System -->
-                        <div class="bg-gray-700 p-4 rounded-lg mb-6">
-                            <div class="flex justify-between items-center mb-4">
-                                <h3 class="text-lg font-semibold">Smart Filtering & Search</h3>
-                                <button onclick="resetDNSFilters()" class="text-sm text-gray-400 hover:text-white">
-                                    <i class="fas fa-undo mr-1"></i>Reset
-                                </button>
-                            </div>
-                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Search</label>
-                                    <input type="text" id="dns-search-filter" placeholder="Search records..." 
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Record Type</label>
-                                    <select id="dns-type-filter" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                        <option value="">All Types</option>
-                                        <option value="A">A (IPv4)</option>
-                                        <option value="AAAA">AAAA (IPv6)</option>
-                                        <option value="CNAME">CNAME (Alias)</option>
-                                        <option value="MX">MX (Mail)</option>
-                                        <option value="TXT">TXT (Text)</option>
-                                        <option value="NS">NS (Name Server)</option>
-                                        <option value="PTR">PTR (Reverse)</option>
-                                        <option value="SRV">SRV (Service)</option>
-                                        <option value="CAA">CAA (Certificate)</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Status</label>
-                                    <select id="dns-status-filter" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                        <option value="">All Status</option>
-                                        <option value="active">🟢 Active</option>
-                                        <option value="pending">🟡 Pending</option>
-                                        <option value="error">🔴 Error</option>
-                                        <option value="disabled">⚪ Disabled</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Provider</label>
-                                    <select id="dns-provider-filter" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                        <option value="">All Providers</option>
-                                        <option value="CLOUDFLARE">Cloudflare</option>
-                                        <option value="ROUTE53">AWS Route53</option>
-                                        <option value="GODADDY">GoDaddy</option>
-                                        <option value="NAMECHEAP">Namecheap</option>
-                                        <option value="GOOGLE">Google DNS</option>
-                                        <option value="CUSTOM">Custom</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">TTL Range</label>
-                                    <select id="dns-ttl-filter" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                        <option value="">All TTL</option>
-                                        <option value="60">1 min (60s)</option>
-                                        <option value="300">5 min (300s)</option>
-                                        <option value="1800">30 min (1800s)</option>
-                                        <option value="3600">1 hour (3600s)</option>
-                                        <option value="86400">1 day (86400s)</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- DNS Records Table -->
-                        <div class="bg-gray-700 rounded-lg overflow-hidden">
-                            <div class="flex justify-between items-center p-4 border-b border-gray-600">
-                                <div class="flex items-center space-x-4">
-                                    <label class="flex items-center">
-                                        <input type="checkbox" id="select-all-dns" class="rounded mr-2">
-                                        <span class="text-sm">Select All</span>
-                                    </label>
-                                    <span id="dns-selected-count" class="text-sm text-gray-400">0 selected</span>
-                                </div>
-                                <div class="flex space-x-2">
-                                    <button onclick="bulkDNSAction('enable')" class="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-sm">
-                                        <i class="fas fa-play mr-1"></i>Enable
-                                    </button>
-                                    <button onclick="bulkDNSAction('disable')" class="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 rounded text-sm">
-                                        <i class="fas fa-pause mr-1"></i>Disable
-                                    </button>
-                                    <button onclick="bulkDNSAction('delete')" class="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm">
-                                        <i class="fas fa-trash mr-1"></i>Delete
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <div class="overflow-x-auto">
-                                <table class="w-full text-sm">
-                                    <thead class="bg-gray-600">
-                                        <tr>
-                                            <th class="px-4 py-3 text-left w-12"></th>
-                                            <th class="px-4 py-3 text-left">Name</th>
-                                            <th class="px-4 py-3 text-left">Type</th>
-                                            <th class="px-4 py-3 text-left">Value</th>
-                                            <th class="px-4 py-3 text-left">TTL</th>
-                                            <th class="px-4 py-3 text-left">Provider</th>
-                                            <th class="px-4 py-3 text-left">Status</th>
-                                            <th class="px-4 py-3 text-left">Health</th>
-                                            <th class="px-4 py-3 text-left">Queries</th>
-                                            <th class="px-4 py-3 text-left">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="dns-records-table" class="divide-y divide-gray-600">
-                                        <!-- DNS records will be populated here -->
-                                    </tbody>
-                                </table>
-                            </div>
-                            
-                            <div id="dns-loading" class="text-center py-8 hidden">
-                                <i class="fas fa-spinner fa-spin text-2xl text-purple-400"></i>
-                                <p class="text-gray-400 mt-2">Loading DNS records...</p>
-                            </div>
-                            
-                            <div id="dns-empty" class="text-center py-8 hidden">
-                                <i class="fas fa-inbox text-4xl text-gray-500 mb-4"></i>
-                                <p class="text-gray-400">No DNS records found.</p>
-                                <button onclick="showDNSAddModal()" 
-                                        class="mt-4 bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg">
-                                    <i class="fas fa-plus mr-2"></i>Add your first record
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- DNS Zones Tab -->
-                    <div id="dns-tab-content-zones" class="dns-tab-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">DNS Zones</h3>
-                                <div id="dns-zones-list" class="space-y-3">
-                                    <!-- Dynamic zones content -->
-                                </div>
-                                <button onclick="createNewDNSZone()" class="mt-4 w-full bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg">
-                                    <i class="fas fa-plus mr-2"></i>Create New Zone
-                                </button>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Zone Configuration</h3>
-                                <div id="dns-zone-config" class="space-y-4">
-                                    <div class="text-center text-gray-400">
-                                        <i class="fas fa-cogs text-4xl mb-2"></i>
-                                        <p>Select a zone to configure</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- DNS Analytics Tab -->
-                    <div id="dns-tab-content-analytics" class="dns-tab-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Query Statistics</h3>
-                                <div id="dns-query-chart" class="h-64 flex items-center justify-center border border-gray-600 rounded">
-                                    <div class="text-center text-gray-400">
-                                        <i class="fas fa-chart-line text-4xl mb-2"></i>
-                                        <p>DNS query analytics chart</p>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Performance Metrics</h3>
-                                <div id="dns-performance-metrics" class="space-y-3">
-                                    <!-- Dynamic performance metrics -->
-                                </div>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Top Queries</h3>
-                                <div id="dns-top-queries" class="space-y-2">
-                                    <!-- Dynamic top queries -->
-                                </div>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Response Codes</h3>
-                                <div id="dns-response-codes" class="space-y-2">
-                                    <!-- Dynamic response code stats -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- DNS Security Tab -->
-                    <div id="dns-tab-content-security" class="dns-tab-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">DNSSEC Status</h3>
-                                <div id="dns-dnssec-status" class="space-y-3">
-                                    <!-- Dynamic DNSSEC status -->
-                                </div>
-                                <button onclick="enableDNSSEC()" class="mt-4 w-full bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg">
-                                    <i class="fas fa-shield-alt mr-2"></i>Enable DNSSEC
-                                </button>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Threat Detection</h3>
-                                <div id="dns-threats" class="space-y-2">
-                                    <!-- Dynamic threat information -->
-                                </div>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Security Policies</h3>
-                                <div id="dns-security-policies" class="space-y-2">
-                                    <!-- Dynamic security policies -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- DNS Health Checks Tab -->
-                    <div id="dns-tab-content-health" class="dns-tab-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Health Monitoring</h3>
-                                <div id="dns-health-monitors" class="space-y-3">
-                                    <!-- Dynamic health monitor list -->
-                                </div>
-                                <button onclick="createHealthMonitor()" class="mt-4 w-full bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg">
-                                    <i class="fas fa-plus mr-2"></i>Add Health Check
-                                </button>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Uptime Statistics</h3>
-                                <div id="dns-uptime-chart" class="h-48 flex items-center justify-center border border-gray-600 rounded">
-                                    <div class="text-center text-gray-400">
-                                        <i class="fas fa-heartbeat text-4xl mb-2"></i>
-                                        <p>Uptime monitoring chart</p>
-                                    </div>
-                                </div>
-                                <div id="dns-uptime-stats" class="mt-4 space-y-2">
-                                    <!-- Dynamic uptime stats -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- GeoDNS Tab -->
-                    <div id="dns-tab-content-geodns" class="dns-tab-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Geographic Routing</h3>
-                                <div id="geodns-map" class="h-64 flex items-center justify-center border border-gray-600 rounded mb-4">
-                                    <div class="text-center text-gray-400">
-                                        <i class="fas fa-globe-americas text-4xl mb-2"></i>
-                                        <p>Interactive GeoDNS map</p>
-                                    </div>
-                                </div>
-                                <button onclick="configureGeoDNS()" class="w-full bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg">
-                                    <i class="fas fa-cog mr-2"></i>Configure GeoDNS
-                                </button>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Regional Settings</h3>
-                                <div id="geodns-regions" class="space-y-3">
-                                    <!-- Dynamic regional configurations -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- DNS Tools Tab -->
-                    <div id="dns-tab-content-tools" class="dns-tab-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">DNS Lookup Tools</h3>
-                                <div class="space-y-4">
-                                    <div>
-                                        <label class="block text-sm font-medium mb-2">Domain to lookup</label>
-                                        <input type="text" id="dns-lookup-domain" placeholder="example.com" 
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg">
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium mb-2">Record Type</label>
-                                        <select id="dns-lookup-type" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg">
-                                            <option value="A">A Record</option>
-                                            <option value="AAAA">AAAA Record</option>
-                                            <option value="CNAME">CNAME Record</option>
-                                            <option value="MX">MX Record</option>
-                                            <option value="TXT">TXT Record</option>
-                                            <option value="NS">NS Record</option>
-                                        </select>
-                                    </div>
-                                    <button onclick="performDNSLookup()" class="w-full bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg">
-                                        <i class="fas fa-search mr-2"></i>Lookup
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Lookup Results</h3>
-                                <div id="dns-lookup-results" class="bg-gray-800 p-4 rounded text-sm font-mono min-h-48">
-                                    <div class="text-center text-gray-400">
-                                        <i class="fas fa-search text-2xl mb-2"></i>
-                                        <p>Lookup results will appear here</p>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Propagation Checker</h3>
-                                <div class="space-y-4">
-                                    <div>
-                                        <label class="block text-sm font-medium mb-2">Check Propagation</label>
-                                        <input type="text" id="dns-propagation-domain" placeholder="example.com" 
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg">
-                                    </div>
-                                    <button onclick="checkDNSPropagationGlobal()" class="w-full bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg">
-                                        <i class="fas fa-globe mr-2"></i>Check Propagation
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4">Propagation Status</h3>
-                                <div id="dns-propagation-results" class="space-y-2">
-                                    <!-- Dynamic propagation results -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
 
                     <!-- DNS Records Filter -->
                     <div class="bg-gray-700 p-4 rounded-lg mb-6">
@@ -8667,1044 +6905,105 @@ app.get('/dashboard', (c) => {
                 </div>
             </div>
 
-            <!-- Deploy Section -->
-            <div id="section-deploy" class="section hidden">
-                <div class="bg-gray-800 rounded-lg p-6">
-                    <div class="flex justify-between items-center mb-6">
-                        <h2 class="text-2xl font-bold">
-                            <i class="fas fa-rocket mr-2 text-blue-400"></i>
-                            Deployment & Infrastructure
-                        </h2>
-                        <div class="flex space-x-2">
-                            <button onclick="refreshDeploymentStatus()" 
-                                    class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">
-                                <i class="fas fa-sync-alt mr-2"></i>Status Yenile
-                            </button>
-                            <button onclick="exportDeploymentConfig()" 
-                                    class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg font-medium">
-                                <i class="fas fa-download mr-2"></i>Config Export
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <!-- Deployment Status Overview -->
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                        <div class="bg-gray-700 p-4 rounded-lg border-l-4 border-green-500">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <p class="text-gray-300 text-sm">Aktif Sunucular</p>
-                                    <p class="text-2xl font-bold text-green-400" id="active-servers-count">0</p>
-                                </div>
-                                <i class="fas fa-server text-green-400 text-2xl"></i>
-                            </div>
-                        </div>
-                        
-                        <div class="bg-gray-700 p-4 rounded-lg border-l-4 border-blue-500">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <p class="text-gray-300 text-sm">Deploy Edilen Domainler</p>
-                                    <p class="text-2xl font-bold text-blue-400" id="deployed-domains-count">0</p>
-                                </div>
-                                <i class="fas fa-globe text-blue-400 text-2xl"></i>
-                            </div>
-                        </div>
-                        
-                        <div class="bg-gray-700 p-4 rounded-lg border-l-4 border-yellow-500">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <p class="text-gray-300 text-sm">Pending Deployments</p>
-                                    <p class="text-2xl font-bold text-yellow-400" id="pending-deployments-count">0</p>
-                                </div>
-                                <i class="fas fa-clock text-yellow-400 text-2xl"></i>
-                            </div>
-                        </div>
-                        
-                        <div class="bg-gray-700 p-4 rounded-lg border-l-4 border-purple-500">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <p class="text-gray-300 text-sm">Ortalama Response</p>
-                                    <p class="text-2xl font-bold text-purple-400" id="avg-response-time">0ms</p>
-                                </div>
-                                <i class="fas fa-tachometer-alt text-purple-400 text-2xl"></i>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Deployment Actions -->
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                        <!-- Quick Deploy -->
-                        <div class="bg-gray-700 p-4 rounded-lg">
-                            <h3 class="text-lg font-semibold mb-4 text-blue-300">
-                                <i class="fas fa-bolt mr-2"></i>Quick Deploy
-                            </h3>
-                            <div class="space-y-4">
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Deploy Target</label>
-                                    <select id="deploy-target" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                        <option value="production">Production Server</option>
-                                        <option value="staging">Staging Environment</option>
-                                        <option value="development">Development Server</option>
-                                        <option value="custom">Custom Server</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Deployment Type</label>
-                                    <div class="grid grid-cols-2 gap-2">
-                                        <label class="flex items-center space-x-2">
-                                            <input type="radio" name="deploy-type" value="nginx" checked class="text-blue-500">
-                                            <span class="text-sm">NGINX Config</span>
-                                        </label>
-                                        <label class="flex items-center space-x-2">
-                                            <input type="radio" name="deploy-type" value="dns" class="text-blue-500">
-                                            <span class="text-sm">DNS Records</span>
-                                        </label>
-                                        <label class="flex items-center space-x-2">
-                                            <input type="radio" name="deploy-type" value="ssl" class="text-blue-500">
-                                            <span class="text-sm">SSL Certificates</span>
-                                        </label>
-                                        <label class="flex items-center space-x-2">
-                                            <input type="radio" name="deploy-type" value="full" class="text-blue-500">
-                                            <span class="text-sm">Full Stack</span>
-                                        </label>
-                                    </div>
-                                </div>
-                                <button onclick="executeQuickDeploy()" 
-                                        class="w-full bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg">
-                                    <i class="fas fa-rocket mr-2"></i>Deploy Now
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <!-- Server Health Check -->
-                        <div class="bg-gray-700 p-4 rounded-lg">
-                            <h3 class="text-lg font-semibold mb-4 text-green-300">
-                                <i class="fas fa-heartbeat mr-2"></i>Server Health Check
-                            </h3>
-                            <div class="space-y-4">
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Server IP/Domain</label>
-                                    <input type="text" id="health-check-target" 
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
-                                           placeholder="192.168.1.100 or domain.com">
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Test Domain</label>
-                                    <input type="text" id="health-check-domain" 
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
-                                           placeholder="test.yourdomain.com">
-                                </div>
-                                <div class="flex space-x-2">
-                                    <button onclick="checkServerHealth()" 
-                                            class="flex-1 bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm">
-                                        <i class="fas fa-stethoscope mr-2"></i>Health Check
-                                    </button>
-                                    <button onclick="checkDNSPropagation()" 
-                                            class="flex-1 bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg text-sm">
-                                        <i class="fas fa-network-wired mr-2"></i>DNS Check
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Deployment History & Logs -->
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                        <!-- Recent Deployments -->
-                        <div class="bg-gray-700 p-4 rounded-lg">
-                            <h3 class="text-lg font-semibold mb-4 text-yellow-300">
-                                <i class="fas fa-history mr-2"></i>Recent Deployments
-                            </h3>
-                            <div id="deployment-history" class="space-y-2 max-h-64 overflow-y-auto">
-                                <div class="bg-gray-600 p-3 rounded border-l-4 border-green-500">
-                                    <div class="flex justify-between items-center">
-                                        <span class="font-medium">Production Deploy</span>
-                                        <span class="text-sm text-gray-400">2 min ago</span>
-                                    </div>
-                                    <div class="text-sm text-gray-300">NGINX config updated for 3 domains</div>
-                                </div>
-                                <div class="bg-gray-600 p-3 rounded border-l-4 border-blue-500">
-                                    <div class="flex justify-between items-center">
-                                        <span class="font-medium">DNS Update</span>
-                                        <span class="text-sm text-gray-400">15 min ago</span>
-                                    </div>
-                                    <div class="text-sm text-gray-300">Added A records for example.com</div>
-                                </div>
-                                <div class="bg-gray-600 p-3 rounded border-l-4 border-yellow-500">
-                                    <div class="flex justify-between items-center">
-                                        <span class="font-medium">SSL Certificate</span>
-                                        <span class="text-sm text-gray-400">1 hour ago</span>
-                                    </div>
-                                    <div class="text-sm text-gray-300">Renewed certificates for 5 domains</div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Live Deployment Logs -->
-                        <div class="bg-gray-700 p-4 rounded-lg">
-                            <h3 class="text-lg font-semibold mb-4 text-red-300">
-                                <i class="fas fa-terminal mr-2"></i>Live Deployment Logs
-                            </h3>
-                            <div id="deployment-logs" class="bg-black p-3 rounded font-mono text-sm max-h-64 overflow-y-auto">
-                                <div class="text-green-400">[2024-01-15 14:30:15] Starting deployment...</div>
-                                <div class="text-blue-400">[2024-01-15 14:30:16] Validating NGINX config</div>
-                                <div class="text-green-400">[2024-01-15 14:30:17] ✓ Configuration validated</div>
-                                <div class="text-yellow-400">[2024-01-15 14:30:18] Backing up current config</div>
-                                <div class="text-green-400">[2024-01-15 14:30:19] ✓ Backup completed</div>
-                                <div class="text-blue-400">[2024-01-15 14:30:20] Applying new configuration</div>
-                                <div class="text-green-400">[2024-01-15 14:30:21] ✓ Deployment completed successfully</div>
-                                <div class="text-cyan-400 animate-pulse">[2024-01-15 14:30:22] Ready for next deployment...</div>
-                            </div>
-                            <div class="mt-3 flex space-x-2">
-                                <button onclick="clearDeploymentLogs()" 
-                                        class="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-sm">
-                                    <i class="fas fa-trash mr-1"></i>Clear
-                                </button>
-                                <button onclick="downloadLogs()" 
-                                        class="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm">
-                                    <i class="fas fa-download mr-1"></i>Download
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Advanced Deployment Tools -->
-                    <div class="bg-gray-700 p-4 rounded-lg">
-                        <h3 class="text-lg font-semibold mb-4 text-purple-300">
-                            <i class="fas fa-tools mr-2"></i>Advanced Deployment Tools
-                        </h3>
-                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                            <button onclick="showBulkDeployModal()" 
-                                    class="bg-indigo-600 hover:bg-indigo-700 px-4 py-3 rounded-lg">
-                                <i class="fas fa-layer-group mr-2"></i>Bulk Deploy
-                            </button>
-                            <button onclick="showRollbackModal()" 
-                                    class="bg-orange-600 hover:bg-orange-700 px-4 py-3 rounded-lg">
-                                <i class="fas fa-undo mr-2"></i>Rollback
-                            </button>
-                            <button onclick="showScheduleDeployModal()" 
-                                    class="bg-teal-600 hover:bg-teal-700 px-4 py-3 rounded-lg">
-                                <i class="fas fa-calendar-alt mr-2"></i>Schedule Deploy
-                            </button>
-                            <button onclick="showDeploymentAnalytics()" 
-                                    class="bg-pink-600 hover:bg-pink-700 px-4 py-3 rounded-lg">
-                                <i class="fas fa-chart-pie mr-2"></i>Analytics
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <!-- Test Results -->
-                    <div id="deployment-test-results" class="mt-6 hidden">
-                        <div class="bg-gray-700 p-4 rounded-lg">
-                            <h3 class="text-lg font-semibold mb-3 text-green-300">
-                                <i class="fas fa-check-circle mr-2"></i>Deployment Test Results
-                            </h3>
-                            <div id="test-results-content" class="space-y-2">
-                                <!-- Results will be populated here -->
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
             <!-- Security Section -->
             <div id="section-security" class="section hidden">
                 <div class="bg-gray-800 rounded-lg p-6">
-                    <div class="flex justify-between items-center mb-6">
-                        <h2 class="text-2xl font-bold">
-                            <i class="fas fa-shield-alt mr-2 text-red-400"></i>
-                            Güvenlik Merkezi
-                        </h2>
-                        <button onclick="refreshSecurityData()" 
-                                class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg font-medium">
-                            <i class="fas fa-sync-alt mr-2"></i>Güvenlik Durumunu Yenile
-                        </button>
-                    </div>
-                    
-                    <!-- Security Overview Stats -->
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                        <div class="bg-gray-700 p-4 rounded-lg border-l-4 border-green-500">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <p class="text-gray-300 text-sm">Güvenli IP'ler</p>
-                                    <p class="text-2xl font-bold text-green-400" id="security-whitelist-count">0</p>
-                                </div>
-                                <i class="fas fa-check-shield text-green-400 text-2xl"></i>
-                            </div>
-                        </div>
-                        
-                        <div class="bg-gray-700 p-4 rounded-lg border-l-4 border-red-500">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <p class="text-gray-300 text-sm">Engellenen IP'ler</p>
-                                    <p class="text-2xl font-bold text-red-400" id="security-blacklist-count">0</p>
-                                </div>
-                                <i class="fas fa-ban text-red-400 text-2xl"></i>
-                            </div>
-                        </div>
-                        
-                        <div class="bg-gray-700 p-4 rounded-lg border-l-4 border-yellow-500">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <p class="text-gray-300 text-sm">Şüpheli IP'ler</p>
-                                    <p class="text-2xl font-bold text-yellow-400" id="security-graylist-count">0</p>
-                                </div>
-                                <i class="fas fa-exclamation-triangle text-yellow-400 text-2xl"></i>
-                            </div>
-                        </div>
-                        
-                        <div class="bg-gray-700 p-4 rounded-lg border-l-4 border-purple-500">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <p class="text-gray-300 text-sm">Kötü Bot Saldırıları</p>
-                                    <p class="text-2xl font-bold text-purple-400" id="security-malicious-bots">0</p>
-                                </div>
-                                <i class="fas fa-robot text-purple-400 text-2xl"></i>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Security Threat Detection -->
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-                        <!-- Real-time Threat Detection -->
-                        <div class="bg-gray-700 p-4 rounded-lg">
-                            <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
-                                <i class="fas fa-radar text-red-400 mr-2"></i>
-                                Gerçek Zamanlı Tehdit Tespiti
-                            </h3>
-                            
-                            <div class="space-y-3">
-                                <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                    <span class="text-gray-300">Bot Attack Detection</span>
-                                    <label class="relative inline-flex items-center cursor-pointer">
-                                        <input type="checkbox" id="bot-attack-detection" class="sr-only peer" checked>
-                                        <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-                                    </label>
-                                </div>
-                                
-                                <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                    <span class="text-gray-300">DDoS Protection</span>
-                                    <label class="relative inline-flex items-center cursor-pointer">
-                                        <input type="checkbox" id="ddos-protection" class="sr-only peer" checked>
-                                        <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-                                    </label>
-                                </div>
-                                
-                                <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                    <span class="text-gray-300">Suspicious IP Monitoring</span>
-                                    <label class="relative inline-flex items-center cursor-pointer">
-                                        <input type="checkbox" id="suspicious-ip-monitoring" class="sr-only peer" checked>
-                                        <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-                                    </label>
-                                </div>
-                                
-                                <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                    <span class="text-gray-300">Geographic Filtering</span>
-                                    <label class="relative inline-flex items-center cursor-pointer">
-                                        <input type="checkbox" id="geo-filtering" class="sr-only peer">
-                                        <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Security Rules Management -->
-                        <div class="bg-gray-700 p-4 rounded-lg">
-                            <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
-                                <i class="fas fa-cogs text-orange-400 mr-2"></i>
-                                Güvenlik Kuralları
-                            </h3>
-                            
-                            <div class="space-y-3">
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-1">Rate Limiting (req/min)</label>
-                                    <input type="number" id="rate-limit-value" value="60" min="1" max="1000"
-                                           class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white text-sm">
-                                </div>
-                                
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-1">Bot Rate Limit (req/min)</label>
-                                    <input type="number" id="bot-rate-limit-value" value="10" min="1" max="100"
-                                           class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white text-sm">
-                                </div>
-                                
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-1">Engellenen Ülkeler</label>
-                                    <input type="text" id="blocked-countries" placeholder="CN,RU,KP"
-                                           class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white text-sm">
-                                    <p class="text-xs text-gray-400 mt-1">Ülke kodlarını virgülle ayırın</p>
-                                </div>
-                                
-                                <button onclick="updateSecurityRules()" 
-                                        class="w-full bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded-lg font-medium">
-                                    <i class="fas fa-shield-alt mr-2"></i>Kuralları Uygula
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Recent Security Events -->
-                    <div class="bg-gray-700 p-4 rounded-lg mb-6">
-                        <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
-                            <i class="fas fa-history text-cyan-400 mr-2"></i>
-                            Son Güvenlik Olayları
-                        </h3>
-                        <div id="security-events-container">
-                            <div class="text-center py-4 text-gray-400">
-                                <i class="fas fa-shield-alt text-2xl mb-2"></i>
-                                <p>Güvenlik olayları yükleniyor...</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Global IP Management -->
-                    <div class="bg-gray-700 p-4 rounded-lg">
-                        <div class="flex justify-between items-center mb-4">
-                            <h3 class="text-lg font-semibold text-white flex items-center">
-                                <i class="fas fa-network-wired text-blue-400 mr-2"></i>
-                                Global IP Yönetimi
-                            </h3>
-                            <button onclick="showGlobalIPManager()" 
-                                    class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">
-                                <i class="fas fa-plus mr-2"></i>IP Kuralı Ekle
-                            </button>
-                        </div>
-                        
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div class="bg-gray-600 p-3 rounded">
-                                <h4 class="font-medium text-green-300 mb-2">
-                                    <i class="fas fa-check-circle mr-1"></i>Whitelist
-                                </h4>
-                                <div id="global-whitelist-preview" class="text-sm text-gray-300">
-                                    Güvenli IP'ler burada görünür...
-                                </div>
-                            </div>
-                            
-                            <div class="bg-gray-600 p-3 rounded">
-                                <h4 class="font-medium text-red-300 mb-2">
-                                    <i class="fas fa-ban mr-1"></i>Blacklist
-                                </h4>
-                                <div id="global-blacklist-preview" class="text-sm text-gray-300">
-                                    Engellenen IP'ler burada görünür...
-                                </div>
-                            </div>
-                            
-                            <div class="bg-gray-600 p-3 rounded">
-                                <h4 class="font-medium text-yellow-300 mb-2">
-                                    <i class="fas fa-exclamation-triangle mr-1"></i>Graylist
-                                </h4>
-                                <div id="global-graylist-preview" class="text-sm text-gray-300">
-                                    İzlenen IP'ler burada görünür...
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    <h2 class="text-2xl font-bold mb-6">
+                        <i class="fas fa-lock mr-2 text-red-400"></i>
+                        Güvenlik Ayarları
+                    </h2>
+                    <p class="text-gray-400">Güvenlik modülü yakında eklenecek...</p>
                 </div>
             </div>
 
             <!-- Settings Section -->
             <div id="section-settings" class="section hidden">
                 <div class="bg-gray-800 rounded-lg p-6">
-                    <div class="flex justify-between items-center mb-6">
-                        <h2 class="text-2xl font-bold">
-                            <i class="fas fa-cog mr-2 text-yellow-400"></i>
-                            System Settings & Configuration
-                        </h2>
-                        <div class="flex space-x-2">
-                            <button onclick="exportSystemConfig()" 
-                                    class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg font-medium">
-                                <i class="fas fa-download mr-2"></i>Export Config
+                    <h2 class="text-2xl font-bold mb-6">
+                        <i class="fas fa-cog mr-2 text-yellow-400"></i>
+                        Deployment & Monitoring
+                    </h2>
+                    
+                    <!-- Real-time Monitoring Controls -->
+                    <div class="bg-gray-700 p-4 rounded-lg mb-6">
+                        <h3 class="text-lg font-semibold mb-4 flex items-center">
+                            <i class="fas fa-eye mr-2 text-green-400"></i>
+                            Real-Time Monitoring
+                        </h3>
+                        <div class="flex items-center space-x-4 mb-4">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-sm">Status:</span>
+                                <span id="monitoringStatus" class="font-semibold">🔴 Stopped</span>
+                            </div>
+                            <div class="text-sm text-gray-400" id="lastRefresh">
+                                Henüz güncelleme yapılmadı
+                            </div>
+                        </div>
+                        <div class="flex space-x-4">
+                            <button onclick="startMonitoring()" id="startMonitoringBtn"
+                                    class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm">
+                                <i class="fas fa-play mr-2"></i>Start Monitoring
                             </button>
-                            <button onclick="importSystemConfig()" 
-                                    class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">
-                                <i class="fas fa-upload mr-2"></i>Import Config
+                            <button onclick="stopMonitoring()" id="stopMonitoringBtn" disabled
+                                    class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-sm disabled:opacity-50">
+                                <i class="fas fa-stop mr-2"></i>Stop Monitoring
                             </button>
                         </div>
                     </div>
                     
-                    <!-- Settings Navigation Tabs -->
-                    <div class="flex flex-wrap gap-2 mb-6 border-b border-gray-600 pb-4">
-                        <button onclick="showSettingsTab('general')" id="settings-tab-general"
-                                class="settings-tab px-4 py-2 bg-yellow-600 text-white rounded-lg transition-colors">
-                            <i class="fas fa-cog mr-2"></i>General
-                        </button>
-                        <button onclick="showSettingsTab('system')" id="settings-tab-system"
-                                class="settings-tab px-4 py-2 bg-gray-600 hover:bg-yellow-600 rounded-lg transition-colors">
-                            <i class="fas fa-server mr-2"></i>System
-                        </button>
-                        <button onclick="showSettingsTab('performance')" id="settings-tab-performance"
-                                class="settings-tab px-4 py-2 bg-gray-600 hover:bg-yellow-600 rounded-lg transition-colors">
-                            <i class="fas fa-tachometer-alt mr-2"></i>Performance
-                        </button>
-                        <button onclick="showSettingsTab('monitoring')" id="settings-tab-monitoring"
-                                class="settings-tab px-4 py-2 bg-gray-600 hover:bg-yellow-600 rounded-lg transition-colors">
-                            <i class="fas fa-eye mr-2"></i>Monitoring
-                        </button>
-                        <button onclick="showSettingsTab('backup')" id="settings-tab-backup"
-                                class="settings-tab px-4 py-2 bg-gray-600 hover:bg-yellow-600 rounded-lg transition-colors">
-                            <i class="fas fa-archive mr-2"></i>Backup
-                        </button>
-                        <button onclick="showSettingsTab('logs')" id="settings-tab-logs"
-                                class="settings-tab px-4 py-2 bg-gray-600 hover:bg-yellow-600 rounded-lg transition-colors">
-                            <i class="fas fa-file-alt mr-2"></i>Logs
-                        </button>
+                    <!-- Deployment Testing -->
+                    <div class="bg-gray-700 p-4 rounded-lg mb-6">
+                        <h3 class="text-lg font-semibold mb-4 flex items-center">
+                            <i class="fas fa-rocket mr-2 text-blue-400"></i>
+                            Deployment Testing
+                        </h3>
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <label class="block text-sm font-medium mb-2">NGINX Server IP</label>
+                                <input type="text" id="serverIp"
+                                       class="w-full p-2 bg-gray-600 border border-gray-500 rounded"
+                                       placeholder="192.168.1.100 veya domain.com">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-2">Test Domain</label>
+                                <input type="text" id="testDomain"
+                                       class="w-full p-2 bg-gray-600 border border-gray-500 rounded"
+                                       placeholder="your-domain.com">
+                            </div>
+                        </div>
+                        <div class="flex space-x-4 mb-4">
+                            <button onclick="checkDeploymentStatus()"
+                                    class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm">
+                                <i class="fas fa-server mr-2"></i>Test Server
+                            </button>
+                            <button onclick="checkDNS()"
+                                    class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg text-sm">
+                                <i class="fas fa-globe mr-2"></i>Check DNS
+                            </button>
+                        </div>
+                        <div id="deploymentResult" class="text-sm"></div>
+                        <div id="dnsResult" class="text-sm"></div>
                     </div>
                     
-                    <!-- General Settings Tab -->
-                    <div id="settings-content-general" class="settings-content">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <!-- Platform Settings -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 text-yellow-300">
-                                    <i class="fas fa-globe mr-2"></i>Platform Settings
-                                </h3>
-                                <div class="space-y-4">
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Platform Name</label>
-                                        <input type="text" id="platform-name" value="Traffic Management Platform"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Default Language</label>
-                                        <select id="default-language" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                            <option value="tr" selected>Türkçe</option>
-                                            <option value="en">English</option>
-                                            <option value="de">Deutsch</option>
-                                            <option value="fr">Français</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Timezone</label>
-                                        <select id="timezone" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                            <option value="Europe/Istanbul" selected>Europe/Istanbul (UTC+3)</option>
-                                            <option value="Europe/London">Europe/London (UTC+0)</option>
-                                            <option value="America/New_York">America/New_York (UTC-5)</option>
-                                            <option value="Asia/Tokyo">Asia/Tokyo (UTC+9)</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
+                    <!-- Quick Commands -->
+                    <div class="bg-gray-700 p-4 rounded-lg">
+                        <h3 class="text-lg font-semibold mb-4 flex items-center">
+                            <i class="fas fa-terminal mr-2 text-cyan-400"></i>
+                            Quick Deploy Commands
+                        </h3>
+                        <div class="bg-black p-4 rounded font-mono text-sm space-y-2">
+                            <div class="text-green-400"># 1. Server kurulumu</div>
+                            <div class="text-white">wget https://your-domain.com/nginx-setup.sh && chmod +x nginx-setup.sh && ./nginx-setup.sh</div>
                             
-                            <!-- Authentication Settings -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 text-red-300">
-                                    <i class="fas fa-key mr-2"></i>Authentication Settings
-                                </h3>
-                                <div class="space-y-4">
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Session Timeout (minutes)</label>
-                                        <input type="number" id="session-timeout" value="60" min="5" max="1440"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                        <span class="text-gray-300">Require Two-Factor Auth</span>
-                                        <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" id="require-2fa" class="sr-only peer">
-                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"></div>
-                                        </label>
-                                    </div>
-                                    <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                        <span class="text-gray-300">Auto Logout on Close</span>
-                                        <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" id="auto-logout" class="sr-only peer" checked>
-                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"></div>
-                                        </label>
-                                    </div>
-                                    <button onclick="changeAdminPassword()" 
-                                            class="w-full bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg">
-                                        <i class="fas fa-lock mr-2"></i>Change Password
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Default Configuration Settings -->
-                        <div class="mt-6 bg-gray-700 p-4 rounded-lg">
-                            <h3 class="text-lg font-semibold mb-4 text-blue-300">
-                                <i class="fas fa-sliders-h mr-2"></i>Default Configuration Settings
-                            </h3>
-                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Default Rate Limit (req/min)</label>
-                                    <input type="number" id="default-rate-limit" value="100" min="1" max="10000"
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Default Bot Limit (req/min)</label>
-                                    <input type="number" id="default-bot-limit" value="10" min="1" max="1000"
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Analytics Retention (days)</label>
-                                    <input type="number" id="analytics-retention" value="90" min="1" max="365"
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- System Settings Tab -->
-                    <div id="settings-content-system" class="settings-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <!-- System Information -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 text-green-300">
-                                    <i class="fas fa-info-circle mr-2"></i>System Information
-                                </h3>
-                                <div class="space-y-3">
-                                    <div class="flex justify-between">
-                                        <span class="text-gray-300">Platform Version:</span>
-                                        <span class="text-white font-mono">v2.1.0</span>
-                                    </div>
-                                    <div class="flex justify-between">
-                                        <span class="text-gray-300">Node.js Version:</span>
-                                        <span class="text-white font-mono" id="node-version">v18.17.0</span>
-                                    </div>
-                                    <div class="flex justify-between">
-                                        <span class="text-gray-300">Uptime:</span>
-                                        <span class="text-white font-mono" id="system-uptime">2h 30m</span>
-                                    </div>
-                                    <div class="flex justify-between">
-                                        <span class="text-gray-300">Memory Usage:</span>
-                                        <span class="text-white font-mono" id="memory-usage">145MB / 512MB</span>
-                                    </div>
-                                    <div class="flex justify-between">
-                                        <span class="text-gray-300">CPU Usage:</span>
-                                        <span class="text-white font-mono" id="cpu-usage">12%</span>
-                                    </div>
-                                </div>
-                            </div>
+                            <div class="text-green-400 mt-4"># 2. Config deployment</div>
+                            <div class="text-white">wget https://your-domain.com/deploy-config.sh && chmod +x deploy-config.sh && ./deploy-config.sh</div>
                             
-                            <!-- File System Settings -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 text-orange-300">
-                                    <i class="fas fa-folder mr-2"></i>File System Settings
-                                </h3>
-                                <div class="space-y-4">
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Max File Upload Size (MB)</label>
-                                        <input type="number" id="max-file-size" value="50" min="1" max="1000"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Temp File Cleanup (hours)</label>
-                                        <input type="number" id="temp-cleanup" value="24" min="1" max="168"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                        <span class="text-gray-300">Auto Compress Logs</span>
-                                        <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" id="compress-logs" class="sr-only peer" checked>
-                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-600"></div>
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- API Configuration -->
-                        <div class="mt-6 bg-gray-700 p-4 rounded-lg">
-                            <h3 class="text-lg font-semibold mb-4 text-purple-300">
-                                <i class="fas fa-plug mr-2"></i>API Configuration
-                            </h3>
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">API Rate Limit (req/min)</label>
-                                    <input type="number" id="api-rate-limit" value="1000" min="100" max="10000"
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">API Timeout (seconds)</label>
-                                    <input type="number" id="api-timeout" value="30" min="5" max="300"
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                </div>
-                                <div class="md:col-span-2">
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">CORS Origins (one per line)</label>
-                                    <textarea id="cors-origins" rows="3"
-                                              class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
-                                              placeholder="https://example.com
-https://app.example.com
-http://localhost:3000"></textarea>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Performance Settings Tab -->
-                    <div id="settings-content-performance" class="settings-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <!-- Cache Settings -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 text-cyan-300">
-                                    <i class="fas fa-database mr-2"></i>Cache Settings
-                                </h3>
-                                <div class="space-y-4">
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Memory Cache Size (MB)</label>
-                                        <input type="number" id="cache-size" value="128" min="32" max="2048"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Cache TTL (seconds)</label>
-                                        <input type="number" id="cache-ttl" value="3600" min="60" max="86400"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                        <span class="text-gray-300">Enable Cache Compression</span>
-                                        <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" id="cache-compression" class="sr-only peer" checked>
-                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-600"></div>
-                                        </label>
-                                    </div>
-                                    <button onclick="clearSystemCache()" 
-                                            class="w-full bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg">
-                                        <i class="fas fa-broom mr-2"></i>Clear Cache
-                                    </button>
-                                </div>
-                            </div>
+                            <div class="text-green-400 mt-4"># 3. DNS kontrol</div>
+                            <div class="text-white">nslookup your-domain.com 8.8.8.8</div>
                             
-                            <!-- Database Performance -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 text-indigo-300">
-                                    <i class="fas fa-chart-line mr-2"></i>Database Performance
-                                </h3>
-                                <div class="space-y-4">
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Connection Pool Size</label>
-                                        <input type="number" id="db-pool-size" value="10" min="5" max="100"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Query Timeout (ms)</label>
-                                        <input type="number" id="query-timeout" value="5000" min="1000" max="30000"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                        <span class="text-gray-300">Enable Query Logging</span>
-                                        <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" id="query-logging" class="sr-only peer">
-                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                                        </label>
-                                    </div>
-                                    <button onclick="optimizeDatabase()" 
-                                            class="w-full bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg">
-                                        <i class="fas fa-magic mr-2"></i>Optimize Database
-                                    </button>
-                                </div>
-                            </div>
+                            <div class="text-green-400 mt-4"># 4. Traffic test</div>
+                            <div class="text-white">curl -H "User-Agent: facebookexternalhit/1.1" -H "Referer: https://facebook.com/" -I http://your-domain.com</div>
                         </div>
-                        
-                        <!-- Worker Process Settings -->
-                        <div class="mt-6 bg-gray-700 p-4 rounded-lg">
-                            <h3 class="text-lg font-semibold mb-4 text-pink-300">
-                                <i class="fas fa-cogs mr-2"></i>Worker Process Settings
-                            </h3>
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Worker Count</label>
-                                    <input type="number" id="worker-count" value="4" min="1" max="16"
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Max Memory per Worker (MB)</label>
-                                    <input type="number" id="worker-memory" value="256" min="128" max="2048"
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Worker Restart Threshold</label>
-                                    <input type="number" id="worker-restart" value="1000" min="100" max="10000"
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Monitoring Settings Tab -->
-                    <div id="settings-content-monitoring" class="settings-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <!-- Real-time Monitoring -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 text-green-300">
-                                    <i class="fas fa-eye mr-2"></i>Real-Time Monitoring
-                                </h3>
-                                <div class="flex items-center space-x-4 mb-4">
-                                    <div class="flex items-center space-x-2">
-                                        <span class="text-sm">Status:</span>
-                                        <span id="monitoringStatus" class="font-semibold">🔴 Stopped</span>
-                                    </div>
-                                    <div class="text-sm text-gray-400" id="lastRefresh">
-                                        Henüz güncelleme yapılmadı
-                                    </div>
-                                </div>
-                                <div class="space-y-3 mb-4">
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-1">Refresh Interval (seconds)</label>
-                                        <input type="number" id="monitor-interval" value="30" min="5" max="300"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                        <span class="text-gray-300">Auto-start Monitoring</span>
-                                        <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" id="auto-start-monitoring" class="sr-only peer">
-                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-                                        </label>
-                                    </div>
-                                </div>
-                                <div class="flex space-x-2">
-                                    <button onclick="startMonitoring()" id="startMonitoringBtn"
-                                            class="flex-1 bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm">
-                                        <i class="fas fa-play mr-2"></i>Start
-                                    </button>
-                                    <button onclick="stopMonitoring()" id="stopMonitoringBtn" disabled
-                                            class="flex-1 bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-sm disabled:opacity-50">
-                                        <i class="fas fa-stop mr-2"></i>Stop
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <!-- Alert Settings -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 text-red-300">
-                                    <i class="fas fa-bell mr-2"></i>Alert Settings
-                                </h3>
-                                <div class="space-y-4">
-                                    <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                        <span class="text-gray-300">Email Alerts</span>
-                                        <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" id="email-alerts" class="sr-only peer">
-                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"></div>
-                                        </label>
-                                    </div>
-                                    <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                        <span class="text-gray-300">SMS Alerts</span>
-                                        <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" id="sms-alerts" class="sr-only peer">
-                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"></div>
-                                        </label>
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Alert Email</label>
-                                        <input type="email" id="alert-email" placeholder="admin@example.com"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">CPU Alert Threshold (%)</label>
-                                        <input type="number" id="cpu-threshold" value="80" min="50" max="95"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Memory Alert Threshold (%)</label>
-                                        <input type="number" id="memory-threshold" value="85" min="50" max="95"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Health Check Configuration -->
-                        <div class="mt-6 bg-gray-700 p-4 rounded-lg">
-                            <h3 class="text-lg font-semibold mb-4 text-blue-300">
-                                <i class="fas fa-heartbeat mr-2"></i>Health Check Configuration
-                            </h3>
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Check Interval (seconds)</label>
-                                    <input type="number" id="health-interval" value="60" min="30" max="3600"
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Timeout (seconds)</label>
-                                    <input type="number" id="health-timeout" value="10" min="5" max="60"
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-300 mb-2">Retry Count</label>
-                                    <input type="number" id="health-retries" value="3" min="1" max="10"
-                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Backup Settings Tab -->
-                    <div id="settings-content-backup" class="settings-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <!-- Automatic Backup -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 text-purple-300">
-                                    <i class="fas fa-clock mr-2"></i>Automatic Backup
-                                </h3>
-                                <div class="space-y-4">
-                                    <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                        <span class="text-gray-300">Enable Auto Backup</span>
-                                        <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" id="auto-backup" class="sr-only peer" checked>
-                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
-                                        </label>
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Backup Frequency</label>
-                                        <select id="backup-frequency" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                            <option value="hourly">Hourly</option>
-                                            <option value="daily" selected>Daily</option>
-                                            <option value="weekly">Weekly</option>
-                                            <option value="monthly">Monthly</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Retention Period (days)</label>
-                                        <input type="number" id="backup-retention" value="30" min="1" max="365"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Max Backup Size (GB)</label>
-                                        <input type="number" id="backup-size-limit" value="10" min="1" max="100"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- Manual Backup -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 text-green-300">
-                                    <i class="fas fa-download mr-2"></i>Manual Backup
-                                </h3>
-                                <div class="space-y-4">
-                                    <div class="text-sm text-gray-300">
-                                        <p class="mb-2">Backup includes:</p>
-                                        <ul class="list-disc list-inside space-y-1 text-xs">
-                                            <li>Domain configurations</li>
-                                            <li>Analytics data</li>
-                                            <li>IP rules and security settings</li>
-                                            <li>System settings</li>
-                                            <li>DNS records</li>
-                                        </ul>
-                                    </div>
-                                    <button onclick="createManualBackup()" 
-                                            class="w-full bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg">
-                                        <i class="fas fa-download mr-2"></i>Create Backup Now
-                                    </button>
-                                    <button onclick="restoreFromBackup()" 
-                                            class="w-full bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded-lg">
-                                        <i class="fas fa-upload mr-2"></i>Restore from Backup
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Backup History -->
-                        <div class="mt-6 bg-gray-700 p-4 rounded-lg">
-                            <h3 class="text-lg font-semibold mb-4 text-yellow-300">
-                                <i class="fas fa-history mr-2"></i>Backup History
-                            </h3>
-                            <div id="backup-history">
-                                <div class="text-center py-4 text-gray-400">
-                                    <i class="fas fa-archive text-2xl mb-2"></i>
-                                    <p>Backup history loading...</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Logs Settings Tab -->
-                    <div id="settings-content-logs" class="settings-content hidden">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <!-- Log Configuration -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <h3 class="text-lg font-semibold mb-4 text-cyan-300">
-                                    <i class="fas fa-cog mr-2"></i>Log Configuration
-                                </h3>
-                                <div class="space-y-4">
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Log Level</label>
-                                        <select id="log-level" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                            <option value="error">Error Only</option>
-                                            <option value="warn">Warning & Above</option>
-                                            <option value="info" selected>Info & Above</option>
-                                            <option value="debug">Debug (Verbose)</option>
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Log Rotation Size (MB)</label>
-                                        <input type="number" id="log-rotation-size" value="100" min="10" max="1000"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-300 mb-2">Max Log Files</label>
-                                        <input type="number" id="max-log-files" value="10" min="1" max="100"
-                                               class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
-                                    </div>
-                                    <div class="flex items-center justify-between p-2 bg-gray-600 rounded">
-                                        <span class="text-gray-300">Enable Console Logging</span>
-                                        <label class="relative inline-flex items-center cursor-pointer">
-                                            <input type="checkbox" id="console-logging" class="sr-only peer" checked>
-                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-600"></div>
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- Log Viewer -->
-                            <div class="bg-gray-700 p-4 rounded-lg">
-                                <div class="flex justify-between items-center mb-4">
-                                    <h3 class="text-lg font-semibold text-orange-300">
-                                        <i class="fas fa-eye mr-2"></i>Live Log Viewer
-                                    </h3>
-                                    <div class="flex space-x-2">
-                                        <button onclick="clearLogs()" 
-                                                class="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-sm">
-                                            <i class="fas fa-trash mr-1"></i>Clear
-                                        </button>
-                                        <button onclick="refreshLogs()" 
-                                                class="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm">
-                                            <i class="fas fa-sync-alt mr-1"></i>Refresh
-                                        </button>
-                                    </div>
-                                </div>
-                                <div id="live-logs" class="bg-black p-3 rounded font-mono text-sm h-64 overflow-y-auto">
-                                    <div class="text-green-400">[2024-01-15 14:30:15] INFO: System initialized</div>
-                                    <div class="text-blue-400">[2024-01-15 14:30:16] DEBUG: Loading configuration</div>
-                                    <div class="text-yellow-400">[2024-01-15 14:30:17] WARN: High memory usage detected</div>
-                                    <div class="text-cyan-400 animate-pulse">[2024-01-15 14:30:18] INFO: Monitoring active...</div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Log Analytics -->
-                        <div class="mt-6 bg-gray-700 p-4 rounded-lg">
-                            <h3 class="text-lg font-semibold mb-4 text-pink-300">
-                                <i class="fas fa-chart-bar mr-2"></i>Log Analytics
-                            </h3>
-                            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-                                <div class="bg-gray-600 p-3 rounded text-center">
-                                    <div class="text-2xl font-bold text-green-400">1,234</div>
-                                    <div class="text-sm text-gray-300">Info Messages</div>
-                                </div>
-                                <div class="bg-gray-600 p-3 rounded text-center">
-                                    <div class="text-2xl font-bold text-yellow-400">56</div>
-                                    <div class="text-sm text-gray-300">Warnings</div>
-                                </div>
-                                <div class="bg-gray-600 p-3 rounded text-center">
-                                    <div class="text-2xl font-bold text-red-400">3</div>
-                                    <div class="text-sm text-gray-300">Errors</div>
-                                </div>
-                                <div class="bg-gray-600 p-3 rounded text-center">
-                                    <div class="text-2xl font-bold text-blue-400">45MB</div>
-                                    <div class="text-sm text-gray-300">Total Size</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Save Settings Button -->
-                    <div class="mt-8 flex justify-end space-x-4">
-                        <button onclick="resetToDefaults()" 
-                                class="bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-lg font-medium">
-                            <i class="fas fa-undo mr-2"></i>Reset to Defaults
-                        </button>
-                        <button onclick="saveAllSettings()" 
-                                class="bg-yellow-600 hover:bg-yellow-700 px-6 py-3 rounded-lg font-medium">
-                            <i class="fas fa-save mr-2"></i>Save All Settings
-                        </button>
                     </div>
                 </div>
             </div>
