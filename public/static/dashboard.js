@@ -6577,11 +6577,11 @@ async function updateDeploymentCounters() {
                 }
             }
         } else {
-            // Generate demo stats
-            activeServers = Math.floor(Math.random() * 10) + 5; // 5-15
-            deployedDomains = Math.floor(Math.random() * 20) + 10; // 10-30
-            pendingDeployments = Math.floor(Math.random() * 5); // 0-5
-            avgResponseTime = Math.floor(Math.random() * 200) + 50; // 50-250ms
+            // Show message to login for real stats
+            activeServers = 0;
+            deployedDomains = 0;
+            pendingDeployments = 0;
+            avgResponseTime = 0;
         }
         
         // Update UI elements
@@ -6932,7 +6932,7 @@ function showScheduleDeployModal() {
 // SERVER MANAGEMENT FUNCTIONS
 // =============================================================================
 
-// Load and display servers
+// Load and display servers with real-time metrics
 async function loadServerList() {
     try {
         if (!token || token === 'null') {
@@ -6948,7 +6948,32 @@ async function loadServerList() {
         if (response.ok) {
             const data = await response.json();
             if (data.success && data.servers) {
-                displayServerList(data.servers);
+                // Enhance servers with real-time metrics
+                const serversWithMetrics = await Promise.all(
+                    data.servers.map(async (server) => {
+                        try {
+                            const metricsResponse = await fetch(`/api/deployment/server-metrics/${server.id}`, {
+                                headers: { 'Authorization': 'Bearer ' + token }
+                            });
+                            
+                            if (metricsResponse.ok) {
+                                const metricsData = await metricsResponse.json();
+                                if (metricsData.success) {
+                                    return {
+                                        ...server,
+                                        detailedMetrics: metricsData.metrics,
+                                        lastMetricsUpdate: new Date().toISOString()
+                                    };
+                                }
+                            }
+                        } catch (error) {
+                            console.warn(`Could not load metrics for ${server.id}:`, error);
+                        }
+                        return server;
+                    })
+                );
+                
+                displayServerList(serversWithMetrics);
             }
         } else {
             showMockServers();
@@ -6959,54 +6984,36 @@ async function loadServerList() {
     }
 }
 
-// Display mock servers for demo
-function showMockServers() {
-    const servers = [
-        {
-            id: 'prod_1',
-            name: 'My VPS Server',
-            ip: '207.180.204.60',
-            type: 'production',
-            status: 'active',
-            location: 'Turkey',
-            lastCheck: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-            health: 'healthy',
-            domains: 0,
-            cpu: 25,
-            memory: 45,
-            disk: 15
-        },
-        {
-            id: 'stage_1',
-            name: 'Staging Server',
-            ip: '192.168.1.101',
-            type: 'staging',
-            status: 'active',
-            location: 'US West', 
-            lastCheck: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
-            health: 'healthy',
-            domains: 2,
-            cpu: 23,
-            memory: 34,
-            disk: 12
-        },
-        {
-            id: 'dev_1',
-            name: 'Development Server',
-            ip: '192.168.1.102',
-            type: 'development',
-            status: 'maintenance',
-            location: 'Europe',
-            lastCheck: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-            health: 'warning',
-            domains: 1,
-            cpu: 78,
-            memory: 89,
-            disk: 45
-        }
-    ];
+// Auto-refresh server metrics every 30 seconds
+function startServerMetricsRefresh() {
+    // Clear any existing interval
+    if (window.serverMetricsInterval) {
+        clearInterval(window.serverMetricsInterval);
+    }
     
-    displayServerList(servers);
+    window.serverMetricsInterval = setInterval(() => {
+        if (currentSection === 'deploy' && token && token !== 'null') {
+            loadServerList();
+        }
+    }, 30000);
+}
+
+// Display message when no real servers available
+function showMockServers() {
+    const container = document.getElementById('server-list-container');
+    if (!container) return;
+    
+    container.innerHTML = `
+        <div class="text-center py-8 text-gray-400">
+            <i class="fas fa-server text-4xl mb-4"></i>
+            <p class="text-lg mb-2">No servers connected</p>
+            <p class="text-sm">Please ensure you're logged in to view your real server data.</p>
+            <button onclick="loadServerList()" 
+                    class="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                Retry Connection
+            </button>
+        </div>
+    `;
 }
 
 // Display server list in UI
@@ -7093,6 +7100,7 @@ function displayServerList(servers) {
                             </div>
                             <span class="text-white text-xs">${server.cpu}%</span>
                         </div>
+                        ${server.specs ? `<p class="text-xs text-gray-500 mt-1">${server.specs.processor}</p>` : ''}
                     </div>
                     <div class="bg-gray-700 rounded p-2">
                         <p class="text-gray-400 text-xs">Memory</p>
@@ -7103,6 +7111,13 @@ function displayServerList(servers) {
                             </div>
                             <span class="text-white text-xs">${server.memory}%</span>
                         </div>
+                        ${server.detailedMetrics ? `
+                            <p class="text-xs text-gray-500 mt-1">
+                                ${server.detailedMetrics.usedMemory} / ${server.detailedMetrics.totalMemory}
+                            </p>
+                        ` : server.specs ? `
+                            <p class="text-xs text-gray-500 mt-1">${server.specs.ram} total</p>
+                        ` : ''}
                     </div>
                     <div class="bg-gray-700 rounded p-2">
                         <p class="text-gray-400 text-xs">Disk</p>
@@ -7113,11 +7128,55 @@ function displayServerList(servers) {
                             </div>
                             <span class="text-white text-xs">${server.disk}%</span>
                         </div>
+                        ${server.detailedMetrics ? `
+                            <p class="text-xs text-gray-500 mt-1">
+                                ${server.detailedMetrics.usedDisk} / ${server.detailedMetrics.totalDisk}
+                            </p>
+                        ` : server.specs ? `
+                            <p class="text-xs text-gray-500 mt-1">${server.specs.storage} total</p>
+                        ` : ''}
                     </div>
                 </div>
                 
+                ${server.detailedMetrics ? `
+                    <div class="mt-3 grid grid-cols-2 md:grid-cols-3 gap-4 text-xs">
+                        <div class="bg-gray-700 rounded p-2">
+                            <p class="text-gray-400">Uptime</p>
+                            <p class="text-white">${server.detailedMetrics.uptime}</p>
+                        </div>
+                        <div class="bg-gray-700 rounded p-2">
+                            <p class="text-gray-400">Load Avg</p>
+                            <p class="text-white">${server.detailedMetrics.loadAvg}</p>
+                        </div>
+                        <div class="bg-gray-700 rounded p-2">
+                            <p class="text-gray-400">Processes</p>
+                            <p class="text-white">${server.detailedMetrics.processes}</p>
+                        </div>
+                    </div>
+                    
+                    ${server.services && server.services.length > 0 ? `
+                        <div class="mt-3">
+                            <p class="text-xs text-gray-400 mb-2">Running Services</p>
+                            <div class="flex flex-wrap gap-2">
+                                ${server.services.map(service => `
+                                    <span class="inline-flex items-center px-2 py-1 rounded text-xs ${
+                                        service.status === 'running' ? 'bg-green-600 text-green-100' : 'bg-red-600 text-red-100'
+                                    }">
+                                        <span class="w-2 h-2 rounded-full ${
+                                            service.status === 'running' ? 'bg-green-300' : 'bg-red-300'
+                                        } mr-1"></span>
+                                        ${service.name}:${service.port}
+                                    </span>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                ` : ''}
+                
                 <div class="mt-3 text-xs text-gray-400">
                     Last check: ${formatTimeAgo(server.lastCheck)}
+                    ${server.lastMetricsUpdate ? ` • Metrics updated: ${formatTimeAgo(server.lastMetricsUpdate)}` : ''}
+                    ${server.detailedMetrics ? ` • <span class="text-green-400">Real-time data ✓</span>` : ` • <span class="text-yellow-400">Mock data ⚠️</span>`}
                 </div>
             </div>
         `;
@@ -7368,6 +7427,9 @@ function getTimeAgo(date) {
 function loadDeploymentData() {
     refreshDeploymentStatus();
     loadServerList();
+    
+    // Start auto-refresh for server metrics
+    startServerMetricsRefresh();
 }
 
 // =============================================================================
@@ -8638,112 +8700,72 @@ function updateDevicesTab() {
     document.getElementById('browser-stats').innerHTML = browserHtml;
 }
 
-// Update Sources Tab
+// Update Sources Tab - Real data only
 function updateSourcesTab() {
     const referrerHtml = `
-        <div class="space-y-2">
-            <div class="flex justify-between p-2 bg-gray-600 rounded">
-                <span>google.com</span>
-                <span class="font-bold text-blue-400">28.3%</span>
-            </div>
-            <div class="flex justify-between p-2 bg-gray-600 rounded">
-                <span>facebook.com</span>
-                <span class="font-bold text-blue-400">12.1%</span>
-            </div>
-            <div class="flex justify-between p-2 bg-gray-600 rounded">
-                <span>twitter.com</span>
-                <span class="font-bold text-blue-400">8.7%</span>
+        <div class="text-center py-8 text-gray-400">
+            <i class="fas fa-chart-bar text-3xl mb-3"></i>
+            <p class="text-sm">Gerçek referrer verileri</p>
+            <p class="text-xs mt-1">Sadece gerçek ziyaretçi trafiği gösterilir</p>
+            <div class="mt-4 text-xs text-gray-500">
+                Veriler gerçek domain trafiğinden gelecek
             </div>
         </div>
     `;
     document.getElementById('referrer-stats').innerHTML = referrerHtml;
     
     const searchEngineHtml = `
-        <div class="space-y-2">
-            <div class="flex justify-between p-2 bg-gray-600 rounded">
-                <span>Google</span>
-                <span class="font-bold text-green-400">67.2%</span>
-            </div>
-            <div class="flex justify-between p-2 bg-gray-600 rounded">
-                <span>Bing</span>
-                <span class="font-bold text-green-400">18.4%</span>
-            </div>
-            <div class="flex justify-between p-2 bg-gray-600 rounded">
-                <span>DuckDuckGo</span>
-                <span class="font-bold text-green-400">8.1%</span>
+        <div class="text-center py-8 text-gray-400">
+            <i class="fas fa-search text-3xl mb-3"></i>
+            <p class="text-sm">Gerçek arama motoru verileri</p>
+            <p class="text-xs mt-1">Sadece gerçek organik trafik gösterilir</p>
+            <div class="mt-4 text-xs text-gray-500">
+                Veriler gerçek domain trafiğinden gelecek
             </div>
         </div>
     `;
     document.getElementById('search-engine-stats').innerHTML = searchEngineHtml;
 }
 
-// Update Behavior Tab
+// Update Behavior Tab - Real data only
 function updateBehaviorTab() {
     const sessionHtml = `
-        <div class="space-y-2">
-            <div class="flex justify-between p-2 border-b border-gray-600">
-                <span>Avg. Session Duration</span>
-                <span class="font-bold text-blue-400">4m 23s</span>
-            </div>
-            <div class="flex justify-between p-2 border-b border-gray-600">
-                <span>Pages per Session</span>
-                <span class="font-bold text-green-400">3.2</span>
-            </div>
-            <div class="flex justify-between p-2 border-b border-gray-600">
-                <span>Bounce Rate</span>
-                <span class="font-bold text-yellow-400">23.4%</span>
-            </div>
-            <div class="flex justify-between p-2">
-                <span>Return Visitor Rate</span>
-                <span class="font-bold text-purple-400">41.7%</span>
+        <div class="text-center py-8 text-gray-400">
+            <i class="fas fa-users text-3xl mb-3"></i>
+            <p class="text-sm">Gerçek kullanıcı davranış verileri</p>
+            <p class="text-xs mt-1">Sadece gerçek ziyaretçi aktiviteleri gösterilir</p>
+            <div class="mt-4 text-xs text-gray-500">
+                Session süreleri, sayfa görünümleri ve bounce rate<br>
+                gerçek domain trafiğinden hesaplanacak
             </div>
         </div>
     `;
     document.getElementById('session-duration-stats').innerHTML = sessionHtml;
 }
 
-// Update Security Tab
+// Update Security Tab - Real data only  
 function updateSecurityTab() {
     const threatHtml = `
-        <div class="space-y-3">
-            <div class="p-3 bg-gray-600 rounded">
-                <div class="flex justify-between items-center">
-                    <span class="text-red-400 font-medium">SQL Injection Attempts</span>
-                    <span class="font-bold">12</span>
-                </div>
-                <p class="text-sm text-gray-400 mt-1">Last 24 hours</p>
-            </div>
-            <div class="p-3 bg-gray-600 rounded">
-                <div class="flex justify-between items-center">
-                    <span class="text-yellow-400 font-medium">Suspicious User Agents</span>
-                    <span class="font-bold">47</span>
-                </div>
-                <p class="text-sm text-gray-400 mt-1">Potential scrapers</p>
-            </div>
-            <div class="p-3 bg-gray-600 rounded">
-                <div class="flex justify-between items-center">
-                    <span class="text-orange-400 font-medium">Rate Limit Violations</span>
-                    <span class="font-bold">3</span>
-                </div>
-                <p class="text-sm text-gray-400 mt-1">IPs temporarily blocked</p>
+        <div class="text-center py-8 text-gray-400">
+            <i class="fas fa-shield-alt text-3xl mb-3"></i>
+            <p class="text-sm">Gerçek güvenlik tehditleri</p>
+            <p class="text-xs mt-1">Sadece gerçek saldırı girişimleri gösterilir</p>
+            <div class="mt-4 text-xs text-gray-500">
+                SQL injection, XSS, DDoS girişimleri<br>
+                gerçek sunucu loglarından analiz edilecek
             </div>
         </div>
     `;
     document.getElementById('threat-analysis').innerHTML = threatHtml;
     
     const attackHtml = `
-        <div class="space-y-2">
-            <div class="flex justify-between p-2 border-b border-gray-600">
-                <span>Brute Force</span>
-                <span class="text-red-400 font-bold">8</span>
-            </div>
-            <div class="flex justify-between p-2 border-b border-gray-600">
-                <span>XSS Attempts</span>
-                <span class="text-yellow-400 font-bold">3</span>
-            </div>
-            <div class="flex justify-between p-2">
-                <span>DDoS Mitigation</span>
-                <span class="text-green-400 font-bold">0</span>
+        <div class="text-center py-8 text-gray-400">
+            <i class="fas fa-exclamation-triangle text-3xl mb-3"></i>
+            <p class="text-sm">Gerçek saldırı desenleri</p>
+            <p class="text-xs mt-1">Sadece gerçek güvenlik olayları gösterilir</p>
+            <div class="mt-4 text-xs text-gray-500">
+                Brute force, XSS, DDoS girişimleri<br>
+                gerçek sunucu loglarından tespit edilecek
             </div>
         </div>
     `;
@@ -9388,12 +9410,9 @@ function checkDNSPropagationGlobal() {
     
     // Mock propagation results
     setTimeout(() => {
+        // Note: This would query real DNS servers in production
         const servers = [
-            { name: 'Google DNS (US)', ip: '8.8.8.8', status: 'success', response: '192.0.2.1' },
-            { name: 'Cloudflare DNS (Global)', ip: '1.1.1.1', status: 'success', response: '192.0.2.1' },
-            { name: 'OpenDNS (US)', ip: '208.67.222.222', status: 'success', response: '192.0.2.1' },
-            { name: 'Quad9 (Global)', ip: '9.9.9.9', status: 'pending', response: 'Old: 192.0.2.100' },
-            { name: 'Level3 DNS (US)', ip: '4.2.2.2', status: 'success', response: '192.0.2.1' },
+            { name: 'Real DNS Check Required', ip: 'production', status: 'info', response: 'Connect real domains for testing' }
         ];
         
         let html = '';
