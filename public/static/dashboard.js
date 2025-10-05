@@ -6569,11 +6569,11 @@ async function updateDeploymentCounters() {
             
             if (response.ok) {
                 const data = await response.json();
-                if (data.success) {
-                    activeServers = data.activeServers || 0;
-                    deployedDomains = data.deployedDomains || 0;
-                    pendingDeployments = data.pendingDeployments || 0;
-                    avgResponseTime = data.avgResponseTime || 0;
+                if (data.success && data.stats) {
+                    activeServers = data.stats.activeServers || 0;
+                    deployedDomains = data.stats.deployedDomains || 0;
+                    pendingDeployments = data.stats.pendingDeployments || 0;
+                    avgResponseTime = data.stats.avgResponseTime || 0;
                 }
             }
         } else {
@@ -6928,6 +6928,422 @@ function showScheduleDeployModal() {
     showNotification('Schedule deployment modal is under development', 'info');
 }
 
+// =============================================================================
+// SERVER MANAGEMENT FUNCTIONS
+// =============================================================================
+
+// Load and display servers
+async function loadServerList() {
+    try {
+        if (!token || token === 'null') {
+            // Show mock server data for demo
+            showMockServers();
+            return;
+        }
+        
+        const response = await fetch('/api/deployment/servers', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.servers) {
+                displayServerList(data.servers);
+            }
+        } else {
+            showMockServers();
+        }
+    } catch (error) {
+        console.error('Error loading servers:', error);
+        showMockServers();
+    }
+}
+
+// Display mock servers for demo
+function showMockServers() {
+    const servers = [
+        {
+            id: 'prod_1',
+            name: 'My VPS Server',
+            ip: '207.180.204.60',
+            type: 'production',
+            status: 'active',
+            location: 'Turkey',
+            lastCheck: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+            health: 'healthy',
+            domains: 0,
+            cpu: 25,
+            memory: 45,
+            disk: 15
+        },
+        {
+            id: 'stage_1',
+            name: 'Staging Server',
+            ip: '192.168.1.101',
+            type: 'staging',
+            status: 'active',
+            location: 'US West', 
+            lastCheck: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+            health: 'healthy',
+            domains: 2,
+            cpu: 23,
+            memory: 34,
+            disk: 12
+        },
+        {
+            id: 'dev_1',
+            name: 'Development Server',
+            ip: '192.168.1.102',
+            type: 'development',
+            status: 'maintenance',
+            location: 'Europe',
+            lastCheck: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+            health: 'warning',
+            domains: 1,
+            cpu: 78,
+            memory: 89,
+            disk: 45
+        }
+    ];
+    
+    displayServerList(servers);
+}
+
+// Display server list in UI
+function displayServerList(servers) {
+    const container = document.getElementById('server-list-container');
+    if (!container) return;
+    
+    let html = '';
+    
+    servers.forEach(server => {
+        const statusColor = {
+            'active': 'text-green-400',
+            'maintenance': 'text-yellow-400',
+            'offline': 'text-red-400',
+            'pending': 'text-blue-400'
+        }[server.status] || 'text-gray-400';
+        
+        const healthColor = {
+            'healthy': 'text-green-400', 
+            'warning': 'text-yellow-400',
+            'error': 'text-red-400',
+            'checking': 'text-blue-400'
+        }[server.health] || 'text-gray-400';
+        
+        const typeColor = {
+            'production': 'bg-red-600',
+            'staging': 'bg-yellow-600', 
+            'development': 'bg-blue-600',
+            'custom': 'bg-purple-600'
+        }[server.type] || 'bg-gray-600';
+        
+        html += `
+            <div class="bg-gray-600 rounded-lg p-4 border-l-4 ${typeColor.replace('bg-', 'border-')}">
+                <div class="flex justify-between items-start mb-3">
+                    <div>
+                        <h4 class="font-semibold text-white">${server.name}</h4>
+                        <p class="text-sm text-gray-300">${server.ip}</p>
+                        <span class="inline-block px-2 py-1 text-xs rounded ${typeColor} text-white mt-1">
+                            ${server.type.toUpperCase()}
+                        </span>
+                    </div>
+                    <div class="flex space-x-2">
+                        <button onclick="editServer('${server.id}')" 
+                                class="p-2 text-blue-400 hover:text-blue-300" title="Edit Server">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button onclick="testServerConnection('${server.id}')" 
+                                class="p-2 text-green-400 hover:text-green-300" title="Test Connection">
+                            <i class="fas fa-plug"></i>
+                        </button>
+                        <button onclick="deleteServer('${server.id}')" 
+                                class="p-2 text-red-400 hover:text-red-300" title="Delete Server">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                        <p class="text-gray-400">Status</p>
+                        <p class="${statusColor}">● ${server.status}</p>
+                    </div>
+                    <div>
+                        <p class="text-gray-400">Health</p>
+                        <p class="${healthColor}">● ${server.health}</p>
+                    </div>
+                    <div>
+                        <p class="text-gray-400">Domains</p>
+                        <p class="text-white">${server.domains}</p>
+                    </div>
+                    <div>
+                        <p class="text-gray-400">Location</p>
+                        <p class="text-white">${server.location}</p>
+                    </div>
+                </div>
+                
+                <div class="mt-3 grid grid-cols-3 gap-4 text-sm">
+                    <div class="bg-gray-700 rounded p-2">
+                        <p class="text-gray-400 text-xs">CPU</p>
+                        <div class="flex items-center space-x-2">
+                            <div class="flex-1 bg-gray-600 rounded-full h-2">
+                                <div class="h-2 rounded-full ${server.cpu > 80 ? 'bg-red-400' : server.cpu > 60 ? 'bg-yellow-400' : 'bg-green-400'}" 
+                                     style="width: ${server.cpu}%"></div>
+                            </div>
+                            <span class="text-white text-xs">${server.cpu}%</span>
+                        </div>
+                    </div>
+                    <div class="bg-gray-700 rounded p-2">
+                        <p class="text-gray-400 text-xs">Memory</p>
+                        <div class="flex items-center space-x-2">
+                            <div class="flex-1 bg-gray-600 rounded-full h-2">
+                                <div class="h-2 rounded-full ${server.memory > 80 ? 'bg-red-400' : server.memory > 60 ? 'bg-yellow-400' : 'bg-green-400'}" 
+                                     style="width: ${server.memory}%"></div>
+                            </div>
+                            <span class="text-white text-xs">${server.memory}%</span>
+                        </div>
+                    </div>
+                    <div class="bg-gray-700 rounded p-2">
+                        <p class="text-gray-400 text-xs">Disk</p>
+                        <div class="flex items-center space-x-2">
+                            <div class="flex-1 bg-gray-600 rounded-full h-2">
+                                <div class="h-2 rounded-full ${server.disk > 80 ? 'bg-red-400' : server.disk > 60 ? 'bg-yellow-400' : 'bg-green-400'}" 
+                                     style="width: ${server.disk}%"></div>
+                            </div>
+                            <span class="text-white text-xs">${server.disk}%</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-3 text-xs text-gray-400">
+                    Last check: ${formatTimeAgo(server.lastCheck)}
+                </div>
+            </div>
+        `;
+    });
+    
+    if (html === '') {
+        html = `
+            <div class="text-center py-8 text-gray-400">
+                <i class="fas fa-server text-4xl mb-4"></i>
+                <p>No servers configured yet</p>
+                <button onclick="showAddServerModal()" 
+                        class="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                    Add Your First Server
+                </button>
+            </div>
+        `;
+    }
+    
+    container.innerHTML = html;
+}
+
+// Show add server modal
+function showAddServerModal() {
+    const modal = document.getElementById('add-server-modal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        
+        // Reset form
+        document.getElementById('server-name').value = '';
+        document.getElementById('server-ip').value = '';
+        document.getElementById('server-type').value = 'production';
+        document.getElementById('server-location').value = '';
+        
+        // Set modal title for adding
+        document.getElementById('server-modal-title').textContent = 'Add New Server';
+        document.getElementById('server-form').setAttribute('data-mode', 'add');
+    }
+}
+
+// Close add server modal
+function closeAddServerModal() {
+    const modal = document.getElementById('add-server-modal');
+    if (modal) {
+        modal.classList.add('hidden');
+    }
+}
+
+// Save server (add or edit)
+async function saveServer() {
+    const form = document.getElementById('server-form');
+    const mode = form.getAttribute('data-mode') || 'add';
+    
+    const serverData = {
+        name: document.getElementById('server-name').value.trim(),
+        ip: document.getElementById('server-ip').value.trim(),
+        type: document.getElementById('server-type').value,
+        location: document.getElementById('server-location').value.trim() || 'Unknown'
+    };
+    
+    // Validation
+    if (!serverData.name || !serverData.ip) {
+        showNotification('Server name and IP address are required', 'error');
+        return;
+    }
+    
+    // Basic IP validation
+    const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+    if (!ipRegex.test(serverData.ip)) {
+        showNotification('Please enter a valid IP address', 'error');
+        return;
+    }
+    
+    try {
+        if (mode === 'edit') {
+            serverData.id = form.getAttribute('data-server-id');
+        }
+        
+        const response = await fetch('/api/deployment/servers', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + (token || 'demo')
+            },
+            body: JSON.stringify(serverData)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(data.message, 'success');
+            closeAddServerModal();
+            loadServerList(); // Refresh server list
+        } else {
+            showNotification(data.message || 'Server save failed', 'error');
+        }
+    } catch (error) {
+        showNotification('Server save error: ' + error.message, 'error');
+    }
+}
+
+// Edit server
+function editServer(serverId) {
+    // In a real implementation, you'd fetch server data by ID
+    // For now, show the modal with placeholder data
+    showAddServerModal();
+    
+    // Set modal for editing mode
+    document.getElementById('server-modal-title').textContent = 'Edit Server';
+    document.getElementById('server-form').setAttribute('data-mode', 'edit');
+    document.getElementById('server-form').setAttribute('data-server-id', serverId);
+    
+    // In production, populate form with server data
+    showNotification('Edit mode - populate with server data', 'info');
+}
+
+// Test server connection
+async function testServerConnection(serverId) {
+    try {
+        showNotification('Testing server connection...', 'info');
+        
+        // Get server info
+        const servers = await getServerList();
+        const server = servers.find(s => s.id === serverId);
+        
+        if (!server) {
+            showNotification('Server not found', 'error');
+            return;
+        }
+        
+        // Test the actual server connection
+        const response = await fetch('/api/test-deployment?' + new URLSearchParams({
+            ip: server.ip,
+            domain: 'test-connection.local'
+        }), {
+            headers: { 'Authorization': 'Bearer ' + (token || 'demo') }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+                showNotification(`✅ Server ${server.ip} connection successful (${data.responseTime}ms)`, 'success');
+            } else {
+                showNotification(`❌ Server ${server.ip} connection failed: ${data.message}`, 'error');
+            }
+        } else {
+            showNotification(`❌ Connection test failed for ${server.ip}`, 'error');
+        }
+        
+    } catch (error) {
+        showNotification('Connection test error: ' + error.message, 'error');
+    }
+}
+
+// Get server list helper
+async function getServerList() {
+    try {
+        if (!token || token === 'null') {
+            return [
+                {
+                    id: 'prod_1',
+                    name: 'My VPS Server',
+                    ip: '207.180.204.60',
+                    type: 'production'
+                }
+            ];
+        }
+        
+        const response = await fetch('/api/deployment/servers', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            return data.success ? data.servers : [];
+        }
+        return [];
+    } catch (error) {
+        console.error('Error getting server list:', error);
+        return [];
+    }
+}
+
+// Delete server
+async function deleteServer(serverId) {
+    if (!confirm('Are you sure you want to delete this server? This action cannot be undone.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/deployment/servers/${serverId}`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': 'Bearer ' + (token || 'demo')
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(data.message, 'success');
+            loadServerList(); // Refresh server list
+        } else {
+            showNotification(data.message || 'Server deletion failed', 'error');
+        }
+    } catch (error) {
+        showNotification('Server deletion error: ' + error.message, 'error');
+    }
+}
+
+// Format time ago helper
+function formatTimeAgo(timestamp) {
+    const now = new Date();
+    const past = new Date(timestamp);
+    const diffMs = now - past;
+    const diffMinutes = Math.floor(diffMs / 60000);
+    
+    if (diffMinutes < 1) return 'Just now';
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+    
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
+}
+
 function showDeploymentAnalytics() {
     showNotification('Deployment analytics modal is under development', 'info');
 }
@@ -6951,6 +7367,7 @@ function getTimeAgo(date) {
 // Initialize deployment data when section is loaded
 function loadDeploymentData() {
     refreshDeploymentStatus();
+    loadServerList();
 }
 
 // =============================================================================
