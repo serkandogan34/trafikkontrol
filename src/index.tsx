@@ -35,6 +35,444 @@ const domainManagers = new Map()
 // DNS Management System
 const dnsRecords = new Map()
 
+// ====================================================================
+// GLOBAL IP POOL MANAGEMENT SYSTEM (CENTRALIZED)
+// ====================================================================
+
+// Centralized IP pool - tracks ALL IP addresses across ALL domains
+const globalIPPool = new Map()
+
+// Risk Assessment Configuration - Now Configurable!
+class RiskAssessmentConfig {
+  constructor() {
+    this.thresholds = {
+      // Visit count thresholds for classification
+      normal: { min: 1, max: 4 },           // 1-4 visits = normal
+      frequent: { min: 5, max: 7 },         // 5-7 visits = frequent
+      suspicious: { min: 8, max: 9 },       // 8-9 visits = suspicious
+      highRisk: { min: 10, max: 14 },       // 10-14 visits = high risk
+      analysisRequired: { min: 15, max: Infinity }, // 15+ visits = analysis required
+      
+      // Time-based thresholds
+      botDetection: {
+        visits: 10,           // 10+ visits
+        timeWindow: 3600000   // within 1 hour (milliseconds)
+      },
+      
+      // Risk level mappings
+      riskLevels: {
+        normal: 'low',
+        frequent: 'medium', 
+        suspicious: 'high',
+        highRisk: 'critical',
+        analysisRequired: 'critical'
+      }
+    }
+  }
+  
+  // Update thresholds
+  updateThresholds(newConfig) {
+    this.thresholds = { ...this.thresholds, ...newConfig }
+    return true
+  }
+  
+  // Get current configuration
+  getConfig() {
+    return JSON.parse(JSON.stringify(this.thresholds))
+  }
+  
+  // Validate configuration
+  validateConfig(config) {
+    const errors = []
+    
+    // Check that min values are in ascending order
+    const classifications = ['normal', 'frequent', 'suspicious', 'highRisk', 'analysisRequired']
+    let previousMax = 0
+    
+    for (const classification of classifications.slice(0, -1)) {
+      if (config[classification]) {
+        if (config[classification].min <= previousMax) {
+          errors.push(`${classification}.min must be greater than previous classification's max`)
+        }
+        if (config[classification].min >= config[classification].max) {
+          errors.push(`${classification}.min must be less than ${classification}.max`)
+        }
+        previousMax = config[classification].max
+      }
+    }
+    
+    // Validate bot detection
+    if (config.botDetection) {
+      if (config.botDetection.visits < 1) {
+        errors.push('botDetection.visits must be at least 1')
+      }
+      if (config.botDetection.timeWindow < 60000) {
+        errors.push('botDetection.timeWindow must be at least 60000ms (1 minute)')
+      }
+    }
+    
+    return { isValid: errors.length === 0, errors }
+  }
+  
+  // Get classification for visit count
+  getClassification(visitCount, recentVisits = 0) {
+    const { thresholds } = this
+    
+    // Check for bot behavior first
+    if (visitCount >= thresholds.botDetection.visits && recentVisits >= thresholds.botDetection.visits) {
+      return { classification: 'high_risk', riskLevel: 'critical', reason: `Likely bot (${visitCount} total, ${recentVisits} in recent window)` }
+    }
+    
+    // Check thresholds in order
+    if (visitCount >= thresholds.analysisRequired.min) {
+      return { 
+        classification: 'analysis_required', 
+        riskLevel: thresholds.riskLevels.analysisRequired, 
+        reason: `Analysis required (${visitCount} visits, manual review needed)` 
+      }
+    }
+    
+    if (visitCount >= thresholds.highRisk.min && visitCount <= thresholds.highRisk.max) {
+      return { 
+        classification: 'high_risk', 
+        riskLevel: thresholds.riskLevels.highRisk, 
+        reason: `High risk activity (${visitCount} visits)` 
+      }
+    }
+    
+    if (visitCount >= thresholds.suspicious.min && visitCount <= thresholds.suspicious.max) {
+      return { 
+        classification: 'suspicious', 
+        riskLevel: thresholds.riskLevels.suspicious, 
+        reason: `Suspicious activity (${visitCount} visits)` 
+      }
+    }
+    
+    if (visitCount >= thresholds.frequent.min && visitCount <= thresholds.frequent.max) {
+      return { 
+        classification: 'frequent', 
+        riskLevel: thresholds.riskLevels.frequent, 
+        reason: `Frequent visitor (${visitCount} visits)` 
+      }
+    }
+    
+    if (visitCount >= thresholds.normal.min && visitCount <= thresholds.normal.max) {
+      return { 
+        classification: 'normal', 
+        riskLevel: thresholds.riskLevels.normal, 
+        reason: `Normal visitor (${visitCount} visits)` 
+      }
+    }
+    
+    // First visit
+    return { classification: 'new', riskLevel: 'unknown', reason: 'First visit' }
+  }
+}
+
+// Initialize risk assessment configuration
+const riskConfig = new RiskAssessmentConfig()
+
+class IPPoolManager {
+  constructor() {
+    this.pool = globalIPPool
+    this.riskConfig = riskConfig
+  }
+  
+  // Track IP visit (called from all API endpoints)
+  trackIP(ip, userAgent = '', referrer = '', endpoint = '') {
+    const now = new Date().toISOString()
+    const hourKey = new Date().toISOString().slice(0, 13) // 2024-01-01T14
+    
+    if (!this.pool.has(ip)) {
+      this.pool.set(ip, {
+        ip: ip,
+        firstSeen: now,
+        lastSeen: now,
+        totalVisits: 0,
+        visitHistory: [],
+        classification: 'new', // new, normal, frequent, suspicious, high_risk, blocked, whitelisted
+        riskLevel: 'unknown', // unknown, low, medium, high, critical, safe
+        manualStatus: null, // null, 'whitelisted', 'blacklisted', 'monitoring'
+        manualReason: '',
+        manualBy: '',
+        manualAt: '',
+        
+        // Analytics
+        hourlyVisits: {}, // { '2024-01-01T14': 5 }
+        endpoints: {}, // { '/api/video': 10, '/api/analytics': 5 }
+        userAgents: [], // Track different user agents (bot detection)
+        referrers: [], // Track referrer sources
+        
+        // Auto-classification history
+        classificationHistory: [{
+          timestamp: now,
+          classification: 'new',
+          reason: 'First visit',
+          visitCount: 0
+        }]
+      })
+    }
+    
+    const ipData = this.pool.get(ip)
+    ipData.lastSeen = now
+    ipData.totalVisits++
+    
+    // Update hourly stats
+    ipData.hourlyVisits[hourKey] = (ipData.hourlyVisits[hourKey] || 0) + 1
+    
+    // Update endpoint stats
+    ipData.endpoints[endpoint] = (ipData.endpoints[endpoint] || 0) + 1
+    
+    // Track user agents and referrers (limited to prevent memory bloat)
+    if (userAgent && ipData.userAgents.length < 10) {
+      if (!ipData.userAgents.includes(userAgent)) {
+        ipData.userAgents.push(userAgent)
+      }
+    }
+    
+    if (referrer && ipData.referrers.length < 10) {
+      if (!ipData.referrers.includes(referrer)) {
+        ipData.referrers.push(referrer)
+      }
+    }
+    
+    // Add visit to history (keep last 50 visits)
+    ipData.visitHistory.push({
+      timestamp: now,
+      endpoint: endpoint,
+      userAgent: userAgent,
+      referrer: referrer
+    })
+    
+    if (ipData.visitHistory.length > 50) {
+      ipData.visitHistory = ipData.visitHistory.slice(-50)
+    }
+    
+    // Auto-classify based on visit patterns
+    this.autoClassifyIP(ip)
+    
+    return ipData
+  }
+  
+  // Automatic IP classification based on configurable visit patterns
+  autoClassifyIP(ip) {
+    const ipData = this.pool.get(ip)
+    if (!ipData || ipData.manualStatus) return // Don't auto-classify if manually set
+    
+    const visits = ipData.totalVisits
+    const now = new Date()
+    const timeWindow = this.riskConfig.thresholds.botDetection.timeWindow
+    const recentTime = new Date(now.getTime() - timeWindow).toISOString().slice(0, 13)
+    const recentVisits = ipData.hourlyVisits[recentTime] || 0
+    
+    // Get classification from configurable rules
+    const result = this.riskConfig.getClassification(visits, recentVisits)
+    
+    // Update classification if changed
+    if (result.classification !== ipData.classification || result.riskLevel !== ipData.riskLevel) {
+      ipData.classification = result.classification
+      ipData.riskLevel = result.riskLevel
+      
+      ipData.classificationHistory.push({
+        timestamp: new Date().toISOString(),
+        classification: result.classification,
+        riskLevel: result.riskLevel,
+        reason: result.reason,
+        visitCount: visits,
+        config: 'auto_configurable'
+      })
+      
+      // Keep classification history limited
+      if (ipData.classificationHistory.length > 20) {
+        ipData.classificationHistory = ipData.classificationHistory.slice(-20)
+      }
+    }
+  }
+  
+  // Manual IP control (whitelist/blacklist/reset)
+  setManualStatus(ip, status, reason, adminUser) {
+    const ipData = this.pool.get(ip)
+    if (!ipData) return false
+    
+    const now = new Date().toISOString()
+    
+    if (status === 'reset') {
+      // Reset to auto-classification
+      ipData.manualStatus = null
+      ipData.manualReason = ''
+      ipData.manualBy = ''
+      ipData.manualAt = ''
+      this.autoClassifyIP(ip) // Re-classify automatically
+      
+      ipData.classificationHistory.push({
+        timestamp: now,
+        classification: ipData.classification,
+        riskLevel: ipData.riskLevel,
+        reason: `Manual reset by ${adminUser}: ${reason}`,
+        visitCount: ipData.totalVisits,
+        action: 'manual_reset'
+      })
+    } else {
+      // Set manual status
+      ipData.manualStatus = status
+      ipData.manualReason = reason
+      ipData.manualBy = adminUser
+      ipData.manualAt = now
+      
+      // Override classification and risk level
+      if (status === 'whitelisted') {
+        ipData.classification = 'whitelisted'
+        ipData.riskLevel = 'safe'
+      } else if (status === 'blacklisted') {
+        ipData.classification = 'blocked'
+        ipData.riskLevel = 'critical'
+      }
+      
+      ipData.classificationHistory.push({
+        timestamp: now,
+        classification: ipData.classification,
+        riskLevel: ipData.riskLevel,
+        reason: `Manual ${status} by ${adminUser}: ${reason}`,
+        visitCount: ipData.totalVisits,
+        action: `manual_${status}`
+      })
+    }
+    
+    return true
+  }
+  
+  // Get IP pool analytics
+  getAnalytics() {
+    const stats = {
+      totalIPs: this.pool.size,
+      totalVisits: 0,
+      classifications: {
+        new: 0,
+        normal: 0,
+        frequent: 0,
+        suspicious: 0,
+        high_risk: 0,
+        analysis_required: 0,
+        blocked: 0,
+        whitelisted: 0
+      },
+      riskDistribution: {
+        unknown: 0,
+        low: 0,
+        medium: 0,
+        high: 0,
+        critical: 0,
+        safe: 0
+      },
+      manualActions: {
+        whitelisted: 0,
+        blacklisted: 0,
+        total: 0
+      }
+    }
+    
+    for (const [ip, data] of this.pool) {
+      stats.totalVisits += data.totalVisits
+      stats.classifications[data.classification] = (stats.classifications[data.classification] || 0) + 1
+      stats.riskDistribution[data.riskLevel] = (stats.riskDistribution[data.riskLevel] || 0) + 1
+      
+      if (data.manualStatus) {
+        stats.manualActions[data.manualStatus] = (stats.manualActions[data.manualStatus] || 0) + 1
+        stats.manualActions.total++
+      }
+    }
+    
+    return stats
+  }
+  
+  // Get IPs that need analysis (based on configurable thresholds)
+  getIPsNeedingAnalysis() {
+    const needsAnalysis = []
+    const suspiciousThreshold = this.riskConfig.thresholds.suspicious.min
+    
+    for (const [ip, data] of this.pool) {
+      if (
+        (data.totalVisits >= suspiciousThreshold && !data.manualStatus) ||
+        data.classification === 'analysis_required' ||
+        data.classification === 'suspicious' ||
+        data.classification === 'high_risk' ||
+        (data.riskLevel === 'critical' && !data.manualStatus)
+      ) {
+        needsAnalysis.push({
+          ip: ip,
+          totalVisits: data.totalVisits,
+          classification: data.classification,
+          riskLevel: data.riskLevel,
+          lastSeen: data.lastSeen,
+          firstSeen: data.firstSeen,
+          recentActivity: this.getRecentActivity(ip),
+          threshold: suspiciousThreshold
+        })
+      }
+    }
+    
+    // Sort by visit count (highest first)
+    return needsAnalysis.sort((a, b) => b.totalVisits - a.totalVisits)
+  }
+  
+  // Get recent activity for an IP
+  getRecentActivity(ip) {
+    const ipData = this.pool.get(ip)
+    if (!ipData) return null
+    
+    const now = new Date()
+    const oneHour = 60 * 60 * 1000
+    const sixHours = 6 * 60 * 60 * 1000
+    const twentyFourHours = 24 * 60 * 60 * 1000
+    
+    const lastHour = ipData.visitHistory.filter(v => 
+      new Date(v.timestamp).getTime() > now.getTime() - oneHour
+    ).length
+    
+    const last6Hours = ipData.visitHistory.filter(v => 
+      new Date(v.timestamp).getTime() > now.getTime() - sixHours
+    ).length
+    
+    const last24Hours = ipData.visitHistory.filter(v => 
+      new Date(v.timestamp).getTime() > now.getTime() - twentyFourHours
+    ).length
+    
+    return {
+      lastHour,
+      last6Hours,
+      last24Hours,
+      totalVisits: ipData.totalVisits
+    }
+  }
+  
+  // Get detailed IP information
+  getIPDetails(ip) {
+    return this.pool.get(ip) || null
+  }
+  
+  // Get top visitors (most active IPs)
+  getTopVisitors(limit = 50) {
+    const visitors = Array.from(this.pool.entries())
+      .map(([ip, data]) => ({
+        ip,
+        totalVisits: data.totalVisits,
+        classification: data.classification,
+        riskLevel: data.riskLevel,
+        manualStatus: data.manualStatus,
+        lastSeen: data.lastSeen,
+        firstSeen: data.firstSeen,
+        recentActivity: this.getRecentActivity(ip)
+      }))
+      .sort((a, b) => b.totalVisits - a.totalVisits)
+      .slice(0, limit)
+    
+    return visitors
+  }
+}
+
+// Initialize global IP pool manager
+const ipPoolManager = new IPPoolManager()
+
 // Data structure for each domain's comprehensive configuration
 class DomainDataManager {
   constructor(domainName) {
@@ -246,6 +684,13 @@ class DomainDataManager {
   // Log visitor analytics with advanced bot detection
   logVisitor(visitorData) {
     const { ip, userAgent, referer, isBot, country, action, botAnalysis } = visitorData
+    
+    // Track IP in global pool (CENTRALIZED IP TRACKING)
+    try {
+      ipPoolManager.trackIP(ip, userAgent || '', referer || '', 'visitor_log')
+    } catch (error) {
+      console.error('Global IP pool tracking error:', error)
+    }
     
     // Perform advanced bot detection if not already done
     const detailedBotAnalysis = botAnalysis || this.detectBot(userAgent, ip, { referer })
@@ -737,6 +1182,88 @@ class DomainDataManager {
     }
     
     return alerts
+  }
+  
+  // Update campaign settings
+  updateCampaignSettings(settings) {
+    const { enabled, utmTracking, validUtmSources, customParameters } = settings
+    
+    if (typeof enabled === 'boolean') {
+      this.data.campaigns.enabled = enabled
+    }
+    
+    if (typeof utmTracking === 'boolean') {
+      this.data.campaigns.utmTracking = utmTracking
+    }
+    
+    if (Array.isArray(validUtmSources)) {
+      this.data.campaigns.validUtmSources = validUtmSources
+    }
+    
+    if (Array.isArray(customParameters)) {
+      this.data.campaigns.customParameters = customParameters
+    }
+    
+    this.save()
+    return this.data.campaigns
+  }
+  
+  // Update rate limiting settings
+  updateRateLimitingSettings(settings) {
+    const { enabled, rules, botLimiting } = settings
+    
+    if (typeof enabled === 'boolean') {
+      this.data.rateLimiting.enabled = enabled
+    }
+    
+    if (rules) {
+      if (rules.perIP) {
+        this.data.rateLimiting.rules.perIP = {
+          ...this.data.rateLimiting.rules.perIP,
+          ...rules.perIP
+        }
+      }
+      
+      if (rules.perSession) {
+        this.data.rateLimiting.rules.perSession = {
+          ...this.data.rateLimiting.rules.perSession,
+          ...rules.perSession
+        }
+      }
+      
+      if (rules.burst) {
+        this.data.rateLimiting.rules.burst = {
+          ...this.data.rateLimiting.rules.burst,
+          ...rules.burst
+        }
+      }
+    }
+    
+    if (botLimiting) {
+      if (botLimiting.perIP) {
+        this.data.rateLimiting.botLimiting.perIP = {
+          ...this.data.rateLimiting.botLimiting.perIP,
+          ...botLimiting.perIP
+        }
+      }
+      
+      if (botLimiting.burst) {
+        this.data.rateLimiting.botLimiting.burst = {
+          ...this.data.rateLimiting.botLimiting.burst,
+          ...botLimiting.burst
+        }
+      }
+    }
+    
+    // Reset rate limit store when settings change
+    this.rateLimitStore = {
+      perIP: {},
+      perSession: {},
+      burst: {}
+    }
+    
+    this.save()
+    return this.data.rateLimiting
   }
   
   // Advanced bot detection with detailed analysis
@@ -2055,6 +2582,381 @@ class DomainDataManager {
     
     return results
   }
+  
+  // =============================================================================
+  // PHASE 2: GEOGRAPHIC & TIME CONTROLS IMPLEMENTATION
+  // =============================================================================
+  
+  // Simple GeoIP detection (in production, you'd use a proper GeoIP service)
+  getCountryFromIP(ip) {
+    // Mock GeoIP detection - in production use MaxMind GeoLite2 or similar
+    const mockGeoData = {
+      '127.0.0.1': 'LOCAL',
+      '192.168.': 'LOCAL',
+      '10.0.': 'LOCAL',
+      '172.16.': 'LOCAL',
+      // Common IP ranges for testing
+      '8.8.8.8': 'US',
+      '1.1.1.1': 'US',
+      '208.67.222.222': 'US',
+      '77.88.8.8': 'RU',
+      '114.114.114.114': 'CN',
+      '8.26.56.26': 'US'
+    }
+    
+    // Check for exact matches first
+    if (mockGeoData[ip]) {
+      return mockGeoData[ip]
+    }
+    
+    // Check for subnet matches
+    for (const [subnet, country] of Object.entries(mockGeoData)) {
+      if (ip.startsWith(subnet)) {
+        return country
+      }
+    }
+    
+    // Default fallback based on IP patterns (very basic)
+    if (ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.16.')) {
+      return 'LOCAL'
+    }
+    
+    // Default to US for unknown IPs (in production, use proper GeoIP)
+    return 'US'
+  }
+  
+  // Check geographic access control
+  checkGeographicAccess(ip, userAgent = '', referer = '') {
+    if (!this.data.geoControls.enabled) {
+      return { allowed: true, action: 'allow', reason: 'Geographic controls disabled' }
+    }
+    
+    const country = this.getCountryFromIP(ip)
+    
+    // Update country analytics
+    this.updateCountryAnalytics(country, ip, userAgent)
+    
+    // Check blocked countries first
+    if (this.data.geoControls.blockedCountries.includes(country)) {
+      return {
+        allowed: false,
+        action: 'block',
+        country: country,
+        reason: `Country ${country} is in blocked list`
+      }
+    }
+    
+    // Check allowed countries (if whitelist is active)
+    if (this.data.geoControls.allowedCountries.length > 0) {
+      if (!this.data.geoControls.allowedCountries.includes(country)) {
+        return {
+          allowed: false,
+          action: 'block',
+          country: country,
+          reason: `Country ${country} is not in allowed list`
+        }
+      }
+    }
+    
+    // Check redirect rules
+    if (this.data.geoControls.redirectRules[country]) {
+      return {
+        allowed: true,
+        action: 'redirect',
+        country: country,
+        redirectUrl: this.data.geoControls.redirectRules[country],
+        reason: `Country ${country} has redirect rule`
+      }
+    }
+    
+    return {
+      allowed: true,
+      action: this.data.geoControls.defaultAction,
+      country: country,
+      reason: `Country ${country} allowed by default action`
+    }
+  }
+  
+  // Update geographic analytics
+  updateCountryAnalytics(country, ip, userAgent) {
+    if (!this.data.analytics.countries[country]) {
+      this.data.analytics.countries[country] = {
+        requests: 0,
+        humans: 0,
+        bots: 0,
+        firstSeen: new Date().toISOString(),
+        lastSeen: new Date().toISOString(),
+        uniqueIPs: new Set()
+      }
+    }
+    
+    const countryData = this.data.analytics.countries[country]
+    countryData.requests++
+    countryData.lastSeen = new Date().toISOString()
+    countryData.uniqueIPs.add(ip)
+    
+    // Simple bot detection for analytics
+    const isBot = this.isBot(userAgent, ip)
+    if (isBot) {
+      countryData.bots++
+    } else {
+      countryData.humans++
+    }
+  }
+  
+  // Check time-based access control
+  checkTimeAccess(timestamp = Date.now(), timezone = null) {
+    if (!this.data.timeControls.enabled) {
+      return { allowed: true, reason: 'Time controls disabled' }
+    }
+    
+    const targetTimezone = timezone || this.data.timeControls.timezone || 'UTC'
+    const date = new Date(timestamp)
+    
+    // Convert to target timezone (simplified - in production use proper timezone library)
+    const localDate = this.convertToTimezone(date, targetTimezone)
+    
+    const dayOfWeek = localDate.toLocaleDateString('en', { weekday: 'short' }).toLowerCase()
+    const hour = localDate.getHours()
+    const dateStr = localDate.toISOString().split('T')[0] // YYYY-MM-DD
+    
+    // Check holiday blocks first
+    for (const holiday of this.data.timeControls.holidayBlocks) {
+      if (holiday.date === dateStr && holiday.action === 'block') {
+        return {
+          allowed: false,
+          reason: `Access blocked on holiday: ${holiday.date}`,
+          holiday: holiday
+        }
+      }
+    }
+    
+    // Check custom time rules
+    for (const rule of this.data.timeControls.rules) {
+      if (!rule.enabled) continue
+      
+      const dayMatch = rule.days.includes(dayOfWeek)
+      const hourMatch = hour >= rule.hours[0] && hour <= rule.hours[1]
+      
+      if (dayMatch && hourMatch) {
+        if (rule.action === 'block') {
+          return {
+            allowed: false,
+            reason: `Access blocked by time rule: ${rule.name || 'Unnamed rule'}`,
+            rule: rule,
+            currentTime: { day: dayOfWeek, hour: hour }
+          }
+        }
+      }
+    }
+    
+    // Check business hours if enabled
+    if (this.data.timeControls.businessHours.enabled) {
+      const bh = this.data.timeControls.businessHours
+      const isBusinessDay = bh.days.includes(dayOfWeek)
+      const isBusinessHour = hour >= bh.start && hour <= bh.end
+      
+      if (bh.blockOutsideHours && (!isBusinessDay || !isBusinessHour)) {
+        return {
+          allowed: false,
+          reason: 'Access restricted to business hours',
+          businessHours: bh,
+          currentTime: { day: dayOfWeek, hour: hour }
+        }
+      }
+    }
+    
+    return {
+      allowed: true,
+      reason: 'Time access allowed',
+      currentTime: { day: dayOfWeek, hour: hour }
+    }
+  }
+  
+  // Simple timezone conversion (in production, use a proper library like moment.js or date-fns-tz)
+  convertToTimezone(date, timezone) {
+    // This is a simplified timezone conversion
+    // In production, use proper timezone handling library
+    const timezoneOffsets = {
+      'UTC': 0,
+      'EST': -5, 'EDT': -4,
+      'CST': -6, 'CDT': -5, 
+      'MST': -7, 'MDT': -6,
+      'PST': -8, 'PDT': -7,
+      'CET': 1, 'CEST': 2,
+      'JST': 9,
+      'IST': 5.5,
+      'GMT': 0
+    }
+    
+    const offset = timezoneOffsets[timezone] || 0
+    const utc = date.getTime() + (date.getTimezoneOffset() * 60000)
+    const targetTime = new Date(utc + (offset * 3600000))
+    
+    return targetTime
+  }
+  
+  // Combined access control check (Geographic + Time + IP)
+  checkAccess(ip, userAgent = '', referer = '', timestamp = Date.now(), timezone = null) {
+    const result = {
+      allowed: true,
+      controls: {
+        ip: null,
+        geographic: null,
+        time: null
+      },
+      finalAction: 'allow',
+      reason: []
+    }
+    
+    // 1. Check IP rules first (existing functionality)
+    const ipStatus = this.checkIPStatus ? this.checkIPStatus(ip) : { status: 'unknown' }
+    result.controls.ip = ipStatus
+    
+    if (ipStatus.status === 'blacklisted') {
+      result.allowed = false
+      result.finalAction = 'block'
+      result.reason.push('IP blacklisted')
+      return result // IP block overrides everything
+    }
+    
+    // 2. Check geographic controls
+    const geoCheck = this.checkGeographicAccess(ip, userAgent, referer)
+    result.controls.geographic = geoCheck
+    
+    if (!geoCheck.allowed) {
+      result.allowed = false
+      result.finalAction = geoCheck.action
+      result.reason.push(geoCheck.reason)
+      return result // Geographic block stops further checks
+    }
+    
+    if (geoCheck.action === 'redirect') {
+      result.finalAction = 'redirect'
+      result.redirectUrl = geoCheck.redirectUrl
+      result.reason.push(geoCheck.reason)
+    }
+    
+    // 3. Check time controls
+    const timeCheck = this.checkTimeAccess(timestamp, timezone)
+    result.controls.time = timeCheck
+    
+    if (!timeCheck.allowed) {
+      result.allowed = false
+      result.finalAction = 'block'
+      result.reason.push(timeCheck.reason)
+      return result
+    }
+    
+    // 4. If IP is whitelisted, allow regardless of other controls
+    if (ipStatus.status === 'whitelisted') {
+      result.allowed = true
+      result.finalAction = 'allow'
+      result.reason.push('IP whitelisted')
+    }
+    
+    if (result.reason.length === 0) {
+      result.reason.push('Access granted - all checks passed')
+    }
+    
+    return result
+  }
+  
+  // Update geographic controls configuration
+  updateGeoControls(updates) {
+    const allowedFields = ['enabled', 'allowedCountries', 'blockedCountries', 'redirectRules', 'defaultAction']
+    
+    for (const [field, value] of Object.entries(updates)) {
+      if (allowedFields.includes(field)) {
+        this.data.geoControls[field] = value
+      }
+    }
+    
+    // Validate configuration
+    if (!['allow', 'block', 'redirect'].includes(this.data.geoControls.defaultAction)) {
+      this.data.geoControls.defaultAction = 'allow'
+    }
+    
+    return true
+  }
+  
+  // Update time controls configuration
+  updateTimeControls(updates) {
+    const allowedFields = ['enabled', 'timezone', 'rules', 'businessHours', 'holidayBlocks']
+    
+    for (const [field, value] of Object.entries(updates)) {
+      if (allowedFields.includes(field)) {
+        this.data.timeControls[field] = value
+      }
+    }
+    
+    return true
+  }
+  
+  // Get geographic analytics
+  getGeographicAnalytics() {
+    const countries = this.data.analytics.countries || {}
+    const totalRequests = Object.values(countries).reduce((sum, country) => sum + country.requests, 0)
+    
+    // Convert Set to number for uniqueIPs
+    const processedCountries = {}
+    for (const [countryCode, data] of Object.entries(countries)) {
+      processedCountries[countryCode] = {
+        ...data,
+        uniqueIPs: data.uniqueIPs ? data.uniqueIPs.size : 0
+      }
+    }
+    
+    return {
+      enabled: this.data.geoControls.enabled,
+      totalCountries: Object.keys(countries).length,
+      totalRequests: totalRequests,
+      countries: processedCountries,
+      allowedCountries: this.data.geoControls.allowedCountries,
+      blockedCountries: this.data.geoControls.blockedCountries,
+      redirectRules: this.data.geoControls.redirectRules,
+      defaultAction: this.data.geoControls.defaultAction,
+      
+      // Top countries by requests
+      topCountries: Object.entries(processedCountries)
+        .sort(([,a], [,b]) => b.requests - a.requests)
+        .slice(0, 10)
+        .map(([code, data]) => ({ code, ...data }))
+    }
+  }
+  
+  // Get time-based analytics
+  getTimeAnalytics() {
+    return {
+      enabled: this.data.timeControls.enabled,
+      timezone: this.data.timeControls.timezone,
+      businessHours: this.data.timeControls.businessHours,
+      rules: this.data.timeControls.rules,
+      holidayBlocks: this.data.timeControls.holidayBlocks,
+      
+      // Current time info
+      currentTime: {
+        utc: new Date().toISOString(),
+        timezone: this.data.timeControls.timezone,
+        local: this.convertToTimezone(new Date(), this.data.timeControls.timezone).toISOString()
+      }
+    }
+  }
+  
+  // Simple bot detection (existing functionality, made available for geographic analytics)
+  isBot(userAgent, ip) {
+    if (!userAgent) return true
+    
+    const botPatterns = [
+      /bot|crawler|spider|crawling/i,
+      /google|bing|yahoo|baidu|yandex/i,
+      /facebook|twitter|linkedin/i,
+      /curl|wget|python|java|php/i,
+      /http|axios|request|fetch/i
+    ]
+    
+    return botPatterns.some(pattern => pattern.test(userAgent))
+  }
 }
 
 // Available countries for geographic controls
@@ -3250,10 +4152,199 @@ function generateToken() {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
 }
 
+// =============================================================================
+// WEBSOCKET REAL-TIME UPDATES SYSTEM
+// =============================================================================
+
+// WebSocket connection store
+const wsConnections = new Map()
+
+// WebSocket endpoint (simulated for Cloudflare Pages compatibility)
+app.get('/ws', async (c) => {
+  // Cloudflare Pages doesn't support WebSocket, so we'll simulate it
+  // In a real implementation, this would upgrade the connection to WebSocket
+  
+  return c.text('WebSocket endpoint - This will be handled by the client-side simulation')
+})
+
+// WebSocket message broadcaster
+function broadcastToWebSockets(type, payload) {
+  const message = JSON.stringify({ type, payload })
+  
+  // In a real WebSocket implementation, this would send to all connected clients
+  // For now, we'll use Server-Sent Events (SSE) as fallback
+  console.log(`[WebSocket Broadcast] ${type}:`, payload)
+}
+
+// Server-Sent Events endpoint (WebSocket fallback for Cloudflare Pages)  
+app.get('/api/events', async (c) => {
+  // Auth check - header veya query parameter
+  const authHeader = c.req.header('authorization')
+  const tokenQuery = c.req.query('token')
+  
+  let token = null
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7)
+  } else if (tokenQuery) {
+    token = tokenQuery
+  }
+  
+  if (!token || !sessions.has(token)) {
+    return c.json({ success: false, message: 'Invalid or missing token' }, 401)
+  }
+  // Set SSE headers
+  c.header('Content-Type', 'text/event-stream')
+  c.header('Cache-Control', 'no-cache')
+  c.header('Connection', 'keep-alive')
+  c.header('Access-Control-Allow-Origin', '*')
+  
+  const encoder = new TextEncoder()
+  
+  // Create a readable stream
+  const stream = new ReadableStream({
+    start(controller) {
+      // Send initial connection message
+      const data = `data: ${JSON.stringify({ type: 'connected', payload: { message: 'SSE connected' } })}\n\n`
+      controller.enqueue(encoder.encode(data))
+      
+      // Simulate periodic updates
+      const interval = setInterval(() => {
+        // Send stats update every 5 seconds
+        const statsData = {
+          type: 'stats_update',
+          payload: {
+            timestamp: Date.now(),
+            totalRequests: Math.floor(Math.random() * 1000) + 500,
+            uniqueVisitors: Math.floor(Math.random() * 100) + 50,
+            botRequests: Math.floor(Math.random() * 50) + 10
+          }
+        }
+        
+        const eventData = `data: ${JSON.stringify(statsData)}\n\n`
+        controller.enqueue(encoder.encode(eventData))
+      }, 5000)
+      
+      // Cleanup on close
+      setTimeout(() => {
+        clearInterval(interval)
+        controller.close()
+      }, 300000) // 5 minutes max connection
+    }
+  })
+  
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive'
+    }
+  })
+})
+
+// =============================================================================
+// AI BOT DETECTION SYSTEM
+// =============================================================================
+
+// AI bot report storage
+const aiBotReports = new Map()
+
+// AI bot report endpoint
+app.post('/api/ai-bot-report', async (c) => {
+  try {
+    const reportData = await c.req.json()
+    const clientIP = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown'
+    
+    // Create report with metadata
+    const report = {
+      id: Date.now().toString() + Math.random().toString(36).substring(7),
+      ip: clientIP,
+      timestamp: Date.now(),
+      userAgent: reportData.userAgent,
+      behaviorData: reportData.behaviorData,
+      analysis: reportData.analysis,
+      confidence: reportData.analysis.confidence || 0,
+      botProbability: reportData.analysis.botProbability || 0,
+      suspiciousPatterns: reportData.analysis.suspiciousPatterns || []
+    }
+    
+    // Store report
+    aiBotReports.set(report.id, report)
+    
+    // Log high-risk reports
+    if (report.botProbability > 80) {
+      console.log(`🚨 High-risk bot detected: ${clientIP} (${report.botProbability}% probability)`)
+    }
+    
+    // Broadcast to WebSocket clients if available
+    broadcastToWebSockets('bot_ai_detection', {
+      ip: clientIP,
+      botProbability: report.botProbability,
+      confidence: report.confidence,
+      patterns: report.suspiciousPatterns,
+      timestamp: report.timestamp
+    })
+    
+    return c.json({
+      success: true,
+      reportId: report.id,
+      message: 'AI bot report received'
+    })
+    
+  } catch (error) {
+    console.error('AI bot report error:', error)
+    return c.json({
+      success: false,
+      message: 'Failed to process AI bot report'
+    }, 500)
+  }
+})
+
+// Get AI bot reports (for analytics)
+app.get('/api/ai-bot-reports', requireAuth, (c) => {
+  const reports = Array.from(aiBotReports.values())
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, 100) // Last 100 reports
+  
+  const analytics = {
+    totalReports: reports.length,
+    highRiskReports: reports.filter(r => r.botProbability > 80).length,
+    mediumRiskReports: reports.filter(r => r.botProbability > 40 && r.botProbability <= 80).length,
+    lowRiskReports: reports.filter(r => r.botProbability <= 40).length,
+    averageBotProbability: reports.length > 0 ? Math.round(reports.reduce((sum, r) => sum + r.botProbability, 0) / reports.length) : 0,
+    topSuspiciousPatterns: getTopSuspiciousPatterns(reports),
+    recentReports: reports.slice(0, 10)
+  }
+  
+  return c.json({
+    success: true,
+    reports: reports,
+    analytics: analytics
+  })
+})
+
+// Helper function for top suspicious patterns
+function getTopSuspiciousPatterns(reports) {
+  const patternCounts = {}
+  
+  reports.forEach(report => {
+    report.suspiciousPatterns.forEach(pattern => {
+      patternCounts[pattern] = (patternCounts[pattern] || 0) + 1
+    })
+  })
+  
+  return Object.entries(patternCounts)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 10)
+    .map(([pattern, count]) => ({ pattern, count }))
+}
+
 // API Routes
 
 // Login API
 app.post('/api/login', async (c) => {
+  // Track IP in global pool
+  trackIPCall(c, '/api/login')
+  
   const { username, password } = await c.req.json()
   
   if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
@@ -3445,6 +4536,271 @@ const getDomainBackendConfig = (domainId) => {
   }
   return domainBackendConfigs.get(domainId)
 }
+
+// =============================================================================
+// AI BOT DETECTION API ENDPOINTS
+// =============================================================================
+
+// Global threat tracking storage
+const threatReports = new Map()
+const activeThreats = new Map()
+
+// AI Bot Report endpoint (receives threat detection reports)
+app.post('/api/ai-bot-report', async (c) => {
+  try {
+    const reportData = await c.req.json()
+    
+    // Track IP for this call
+    const ip = trackIPCall(c, '/api/ai-bot-report')
+    
+    // Generate unique threat ID
+    const threatId = `threat_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    
+    // Enhanced threat report
+    const threatReport = {
+      id: threatId,
+      timestamp: new Date().toISOString(),
+      ip: ip,
+      userAgent: reportData.userAgent,
+      ...reportData,
+      
+      // Server-side analysis
+      serverAnalysis: {
+        ipReputation: await analyzeIPReputation(ip),
+        geoLocation: await getGeoLocation(ip),
+        previousReports: getPreviousThreatReports(ip),
+        riskAssessment: calculateServerRiskScore(reportData, ip)
+      }
+    }
+    
+    // Store threat report
+    threatReports.set(threatId, threatReport)
+    
+    // Update active threats map
+    if (threatReport.threatLevel === 'CRITICAL' || threatReport.threatLevel === 'HIGH') {
+      activeThreats.set(ip, {
+        ...threatReport,
+        firstDetected: threatReport.timestamp,
+        lastSeen: threatReport.timestamp,
+        reportCount: (activeThreats.get(ip)?.reportCount || 0) + 1
+      })
+    }
+    
+    // Real-time threat response
+    const response = await processRealTimeThreatResponse(threatReport)
+    
+    // Log threat for monitoring
+    console.log(`🚨 AI Threat Report: ${threatReport.threatLevel} - IP: ${ip} - Bot Probability: ${reportData.analysis?.botProbability}%`)
+    
+    return c.json({
+      success: true,
+      threatId: threatId,
+      response: response,
+      message: 'Threat report processed',
+      timestamp: threatReport.timestamp
+    })
+    
+  } catch (error) {
+    console.error('AI bot report error:', error)
+    return c.json({ success: false, message: 'Report processing failed' }, 500)
+  }
+})
+
+// Get active threats (admin endpoint)
+app.get('/api/ai-threats/active', requireAuth, (c) => {
+  const activeThreatsArray = Array.from(activeThreats.values())
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    .slice(0, 50) // Latest 50 threats
+  
+  return c.json({
+    success: true,
+    activeThreats: activeThreatsArray,
+    totalActive: activeThreats.size,
+    timestamp: new Date().toISOString()
+  })
+})
+
+// Get threat analytics (admin endpoint)  
+app.get('/api/ai-threats/analytics', requireAuth, (c) => {
+  const allReports = Array.from(threatReports.values())
+  const last24Hours = allReports.filter(r => 
+    new Date(r.timestamp) > new Date(Date.now() - 24 * 60 * 60 * 1000)
+  )
+  
+  const analytics = {
+    total: allReports.length,
+    last24Hours: last24Hours.length,
+    
+    // Threat level breakdown
+    threatLevels: {
+      critical: allReports.filter(r => r.threatLevel === 'CRITICAL').length,
+      high: allReports.filter(r => r.threatLevel === 'HIGH').length,
+      medium: allReports.filter(r => r.threatLevel === 'MEDIUM').length,
+      low: allReports.filter(r => r.threatLevel === 'LOW').length
+    },
+    
+    // Top threat types
+    topThreats: getTopThreatTypes(allReports),
+    
+    // Most active IPs
+    topIPs: getTopThreatIPs(allReports),
+    
+    // Detection effectiveness
+    avgBotProbability: calculateAvgBotProbability(allReports),
+    avgConfidence: calculateAvgConfidence(allReports)
+  }
+  
+  return c.json({
+    success: true,
+    analytics: analytics,
+    timestamp: new Date().toISOString()
+  })
+})
+
+// Server-side analysis functions
+async function analyzeIPReputation(ip) {
+  // Simplified IP reputation check
+  // In production, integrate with threat intelligence APIs
+  
+  const suspiciousRanges = [
+    '66.249.', // Google bots (legitimate)
+    '157.55.', // Bing bots (legitimate)  
+    '40.77.',  // Bing bots
+    '207.46.', // Bing bots
+  ]
+  
+  const isKnownBot = suspiciousRanges.some(range => ip.startsWith(range))
+  
+  return {
+    isKnownBot: isKnownBot,
+    reputation: isKnownBot ? 'legitimate_bot' : 'unknown',
+    source: 'internal_db'
+  }
+}
+
+async function getGeoLocation(ip) {
+  // Simplified geo location
+  // In production, use actual geo IP service
+  return {
+    country: 'Unknown',
+    city: 'Unknown', 
+    source: 'internal'
+  }
+}
+
+function getPreviousThreatReports(ip) {
+  return Array.from(threatReports.values())
+    .filter(report => report.ip === ip)
+    .length
+}
+
+function calculateServerRiskScore(reportData, ip) {
+  let riskScore = 0
+  
+  // Base risk from client analysis
+  if (reportData.analysis) {
+    riskScore += reportData.analysis.botProbability || 0
+  }
+  
+  // Previous reports boost
+  const previousReports = getPreviousThreatReports(ip)
+  riskScore += Math.min(30, previousReports * 5)
+  
+  // Time-based patterns
+  const recentReports = Array.from(threatReports.values())
+    .filter(r => r.ip === ip && 
+             new Date(r.timestamp) > new Date(Date.now() - 60 * 60 * 1000))
+  
+  if (recentReports.length > 3) {
+    riskScore += 25 // Multiple reports in last hour
+  }
+  
+  return Math.min(100, riskScore)
+}
+
+async function processRealTimeThreatResponse(threatReport) {
+  const responses = []
+  
+  switch (threatReport.threatLevel) {
+    case 'CRITICAL':
+      responses.push('IP_FLAGGED')
+      responses.push('RATE_LIMIT_APPLIED')
+      responses.push('SECURITY_TEAM_NOTIFIED')
+      break
+      
+    case 'HIGH':
+      responses.push('ENHANCED_MONITORING')
+      responses.push('RATE_LIMIT_APPLIED')
+      break
+      
+    case 'MEDIUM':
+      responses.push('MONITORING_INCREASED')
+      break
+      
+    case 'LOW':
+      responses.push('LOGGED')
+      break
+  }
+  
+  return {
+    actions: responses,
+    timestamp: new Date().toISOString()
+  }
+}
+
+function getTopThreatTypes(reports) {
+  const threatTypes = {}
+  
+  reports.forEach(report => {
+    if (report.alertData?.primaryThreats) {
+      report.alertData.primaryThreats.forEach(threat => {
+        threatTypes[threat.type] = (threatTypes[threat.type] || 0) + 1
+      })
+    }
+  })
+  
+  return Object.entries(threatTypes)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 10)
+    .map(([type, count]) => ({ type, count }))
+}
+
+function getTopThreatIPs(reports) {
+  const ipCounts = {}
+  
+  reports.forEach(report => {
+    ipCounts[report.ip] = (ipCounts[report.ip] || 0) + 1
+  })
+  
+  return Object.entries(ipCounts)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 10)
+    .map(([ip, count]) => ({ ip, count }))
+}
+
+function calculateAvgBotProbability(reports) {
+  const probabilities = reports
+    .map(r => r.analysis?.botProbability)
+    .filter(p => p !== undefined)
+  
+  return probabilities.length > 0 
+    ? Math.round(probabilities.reduce((a, b) => a + b, 0) / probabilities.length)
+    : 0
+}
+
+function calculateAvgConfidence(reports) {
+  const confidences = reports
+    .map(r => r.analysis?.confidence)
+    .filter(c => c !== undefined)
+  
+  return confidences.length > 0
+    ? Math.round(confidences.reduce((a, b) => a + b, 0) / confidences.length)
+    : 0
+}
+
+// =============================================================================
+// NGINX CONFIGURATION APIs
+// =============================================================================
 
 // NGINX Configuration APIs
 app.post('/api/nginx/generate-config', requireAuth, async (c) => {
@@ -3659,10 +5015,12 @@ app.post('/api/domains/:id/ip-rules', requireAuth, async (c) => {
     return c.json({ success: false, message: 'IP adresi ve liste tipi gerekli' }, 400)
   }
   
-  // Validate IP address
+  // Validate IP address or CIDR range
   const ipRegex = /^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}$/
-  if (!ipRegex.test(ip)) {
-    return c.json({ success: false, message: 'Geçersiz IP adresi formatı' }, 400)
+  const cidrRegex = /^((25[0-5]|(2[0-4]|1\d|[1-9]|)\d)\.?\b){4}\/(3[0-2]|[12]?\d)$/
+  
+  if (!ipRegex.test(ip) && !cidrRegex.test(ip)) {
+    return c.json({ success: false, message: 'Geçersiz IP adresi veya CIDR range formatı' }, 400)
   }
   
   const dataManager = getDomainDataManager(domain.name)
@@ -7280,6 +8638,624 @@ app.post('/api/domains/:id/integrations/trigger-event', requireAuth, async (c) =
   }
 })
 
+// ====================================================================
+// IP MANAGEMENT & VISITOR ANALYTICS API ENDPOINTS (PHASE 1)
+// ====================================================================
+
+// Get domain IP rules
+app.get('/api/domains/:id/ip-rules', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    ipRules: dataManager.data.ipRules,
+    stats: {
+      whitelistCount: dataManager.data.ipRules.whitelist.length,
+      blacklistCount: dataManager.data.ipRules.blacklist.length,
+      graylistCount: dataManager.data.ipRules.graylist.length,
+      rangeCount: {
+        whitelist: dataManager.data.ipRules.ranges.whitelist.length,
+        blacklist: dataManager.data.ipRules.ranges.blacklist.length,
+        graylist: dataManager.data.ipRules.ranges.graylist.length
+      }
+    }
+  })
+})
+
+// Add IP rule to domain
+app.post('/api/domains/:id/ip-rules', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const { ip, range, type, reason } = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  // Validate input
+  if (!type || !['whitelist', 'blacklist', 'graylist'].includes(type)) {
+    return c.json({ success: false, message: 'Geçersiz liste tipi' }, 400)
+  }
+  
+  if (!ip && !range) {
+    return c.json({ success: false, message: 'IP adresi veya CIDR range gerekli' }, 400)
+  }
+  
+  const timestamp = new Date().toISOString()
+  
+  if (ip) {
+    // Validate IP address
+    if (!isValidIP(ip)) {
+      return c.json({ success: false, message: 'Geçersiz IP adresi' }, 400)
+    }
+    
+    // Check if IP already exists in any list
+    const existsIn = checkIPExistsInLists(dataManager.data.ipRules, ip)
+    if (existsIn) {
+      return c.json({ 
+        success: false, 
+        message: `IP adresi zaten ${existsIn} listesinde mevcut` 
+      }, 400)
+    }
+    
+    // Add IP to specified list
+    dataManager.data.ipRules[type].push({
+      ip,
+      reason: reason || 'Manuel ekleme',
+      addedAt: timestamp,
+      addedBy: 'admin'
+    })
+  }
+  
+  if (range) {
+    // Validate CIDR range
+    if (!isValidCIDR(range)) {
+      return c.json({ success: false, message: 'Geçersiz CIDR range' }, 400)
+    }
+    
+    // Add CIDR range to specified list
+    dataManager.data.ipRules.ranges[type].push({
+      range,
+      reason: reason || 'Manuel ekleme',
+      addedAt: timestamp,
+      addedBy: 'admin'
+    })
+  }
+  
+  return c.json({
+    success: true,
+    message: `IP kuralı ${type} listesine başarıyla eklendi`,
+    ipRules: dataManager.data.ipRules
+  })
+})
+
+// Remove IP rule from domain
+app.delete('/api/domains/:id/ip-rules/:ipAddress', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const ipAddress = c.req.param('ipAddress')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  let removed = false
+  
+  // Remove from all lists
+  ['whitelist', 'blacklist', 'graylist'].forEach(type => {
+    // Remove from IP lists
+    const initialLength = dataManager.data.ipRules[type].length
+    dataManager.data.ipRules[type] = dataManager.data.ipRules[type].filter(
+      entry => entry.ip !== ipAddress && entry.range !== ipAddress
+    )
+    if (dataManager.data.ipRules[type].length < initialLength) {
+      removed = true
+    }
+    
+    // Remove from range lists
+    const initialRangeLength = dataManager.data.ipRules.ranges[type].length
+    dataManager.data.ipRules.ranges[type] = dataManager.data.ipRules.ranges[type].filter(
+      entry => entry.range !== ipAddress
+    )
+    if (dataManager.data.ipRules.ranges[type].length < initialRangeLength) {
+      removed = true
+    }
+  })
+  
+  if (!removed) {
+    return c.json({ success: false, message: 'IP adresi bulunamadı' }, 404)
+  }
+  
+  return c.json({
+    success: true,
+    message: 'IP kuralı başarıyla silindi',
+    ipRules: dataManager.data.ipRules
+  })
+})
+
+// Bulk IP operations
+app.post('/api/domains/:id/ip-rules/bulk', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const { operation, type, ips, ranges } = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  if (!['add', 'remove'].includes(operation)) {
+    return c.json({ success: false, message: 'Geçersiz operasyon' }, 400)
+  }
+  
+  if (!['whitelist', 'blacklist', 'graylist'].includes(type)) {
+    return c.json({ success: false, message: 'Geçersiz liste tipi' }, 400)
+  }
+  
+  const timestamp = new Date().toISOString()
+  let addedCount = 0
+  let removedCount = 0
+  const errors = []
+  
+  if (operation === 'add') {
+    // Bulk add IPs
+    if (ips && Array.isArray(ips)) {
+      ips.forEach(ip => {
+        if (isValidIP(ip) && !checkIPExistsInLists(dataManager.data.ipRules, ip)) {
+          dataManager.data.ipRules[type].push({
+            ip,
+            reason: 'Toplu ekleme',
+            addedAt: timestamp,
+            addedBy: 'admin'
+          })
+          addedCount++
+        } else {
+          errors.push(`Geçersiz veya zaten mevcut IP: ${ip}`)
+        }
+      })
+    }
+    
+    // Bulk add ranges
+    if (ranges && Array.isArray(ranges)) {
+      ranges.forEach(range => {
+        if (isValidCIDR(range)) {
+          dataManager.data.ipRules.ranges[type].push({
+            range,
+            reason: 'Toplu ekleme',
+            addedAt: timestamp,
+            addedBy: 'admin'
+          })
+          addedCount++
+        } else {
+          errors.push(`Geçersiz CIDR range: ${range}`)
+        }
+      })
+    }
+  } else if (operation === 'remove') {
+    // Bulk remove IPs
+    if (ips && Array.isArray(ips)) {
+      ips.forEach(ip => {
+        const initialLength = dataManager.data.ipRules[type].length
+        dataManager.data.ipRules[type] = dataManager.data.ipRules[type].filter(
+          entry => entry.ip !== ip
+        )
+        if (dataManager.data.ipRules[type].length < initialLength) {
+          removedCount++
+        }
+      })
+    }
+    
+    // Bulk remove ranges
+    if (ranges && Array.isArray(ranges)) {
+      ranges.forEach(range => {
+        const initialLength = dataManager.data.ipRules.ranges[type].length
+        dataManager.data.ipRules.ranges[type] = dataManager.data.ipRules.ranges[type].filter(
+          entry => entry.range !== range
+        )
+        if (dataManager.data.ipRules.ranges[type].length < initialLength) {
+          removedCount++
+        }
+      })
+    }
+  }
+  
+  return c.json({
+    success: true,
+    message: `Toplu işlem tamamlandı. Eklenen: ${addedCount}, Silinen: ${removedCount}`,
+    stats: { addedCount, removedCount, errorCount: errors.length },
+    errors: errors.slice(0, 10), // Show first 10 errors
+    ipRules: dataManager.data.ipRules
+  })
+})
+
+// Check IP status against domain rules
+app.get('/api/domains/:id/ip-check/:ipAddress', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const ipAddress = c.req.param('ipAddress')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  if (!isValidIP(ipAddress)) {
+    return c.json({ success: false, message: 'Geçersiz IP adresi' }, 400)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const status = checkIPStatus(dataManager.data.ipRules, ipAddress)
+  
+  return c.json({
+    success: true,
+    ip: ipAddress,
+    status: status.type,
+    inList: status.found,
+    reason: status.reason,
+    addedAt: status.addedAt,
+    riskScore: calculateIPRiskScore(ipAddress, status),
+    recommendations: generateIPRecommendations(status, ipAddress)
+  })
+})
+
+// Get domain visitor analytics
+app.get('/api/domains/:id/analytics', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const analytics = dataManager.getAnalytics()
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    analytics: {
+      ...analytics,
+      ipRules: {
+        whitelistCount: dataManager.data.ipRules.whitelist.length,
+        blacklistCount: dataManager.data.ipRules.blacklist.length,
+        graylistCount: dataManager.data.ipRules.graylist.length,
+        totalRules: dataManager.data.ipRules.whitelist.length + 
+                    dataManager.data.ipRules.blacklist.length + 
+                    dataManager.data.ipRules.graylist.length
+      },
+      recentActivity: analytics.recentVisitors.slice(0, 20),
+      hourlyBreakdown: generateHourlyBreakdown(dataManager.data.analytics.hourlyStats),
+      countryBreakdown: generateCountryBreakdown(dataManager.data.analytics.countries)
+    }
+  })
+})
+
+// Get detailed domain analytics with filtering
+app.get('/api/domains/:id/analytics/detailed', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const timeRange = c.req.query('timeRange') || '24h'
+  const country = c.req.query('country')
+  const referrer = c.req.query('referrer')
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const now = Date.now()
+  let timeFilter = now - (24 * 60 * 60 * 1000) // 24 hours default
+  
+  // Parse time range
+  if (timeRange.endsWith('h')) {
+    timeFilter = now - (parseInt(timeRange) * 60 * 60 * 1000)
+  } else if (timeRange.endsWith('d')) {
+    timeFilter = now - (parseInt(timeRange) * 24 * 60 * 60 * 1000)
+  }
+  
+  // Filter visitors
+  let filteredVisitors = dataManager.data.analytics.recentVisitors.filter(visitor => {
+    if (visitor.timestamp < timeFilter) return false
+    if (country && visitor.country !== country) return false
+    if (referrer && !visitor.referer?.includes(referrer)) return false
+    return true
+  })
+  
+  // Generate filtered analytics
+  const filteredAnalytics = {
+    totalRequests: filteredVisitors.length,
+    humanRequests: filteredVisitors.filter(v => !v.isBot).length,
+    botRequests: filteredVisitors.filter(v => v.isBot).length,
+    uniqueCountries: [...new Set(filteredVisitors.map(v => v.country))].length,
+    topReferrers: generateTopReferrers(filteredVisitors),
+    hourlyDistribution: generateHourlyDistribution(filteredVisitors),
+    visitors: filteredVisitors.slice(0, 100)
+  }
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    timeRange,
+    filters: { country, referrer },
+    analytics: filteredAnalytics
+  })
+})
+
+// Get live visitor feed
+app.get('/api/domains/:id/visitors/live', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const lastTimestamp = c.req.query('since') || '0'
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const since = parseInt(lastTimestamp)
+  
+  // Get visitors since timestamp
+  const recentVisitors = dataManager.data.analytics.recentVisitors
+    .filter(visitor => visitor.timestamp > since)
+    .slice(0, 50) // Limit to 50 most recent
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    since: lastTimestamp,
+    visitors: recentVisitors,
+    count: recentVisitors.length,
+    lastTimestamp: recentVisitors.length > 0 ? recentVisitors[0].timestamp : since
+  })
+})
+
+// Enhanced traffic logging
+app.post('/api/traffic/log', async (c) => {
+  try {
+    const { 
+      domain, 
+      ip, 
+      userAgent, 
+      referrer, 
+      country, 
+      path,
+      method = 'GET',
+      responseTime,
+      action = 'viewed',
+      customData = {}
+    } = await c.req.json()
+    
+    if (!domain || !ip) {
+      return c.json({ success: false, message: 'Domain and IP required' }, 400)
+    }
+    
+    const dataManager = getDomainDataManager(domain)
+    
+    // Enhanced bot detection
+    const botAnalysis = dataManager.detectBot(userAgent, ip, customData)
+    
+    // Check IP rules
+    const ipStatus = checkIPStatus(dataManager.data.ipRules, ip)
+    
+    // Log visitor with enhanced data
+    const visitorData = {
+      ip,
+      userAgent: userAgent || 'Unknown',
+      referrer: referrer || 'Direct',
+      country: country || 'Unknown',
+      path: path || '/',
+      method,
+      timestamp: Date.now(),
+      isBot: botAnalysis.isBot,
+      botType: botAnalysis.type,
+      confidence: botAnalysis.confidence,
+      ipStatus: ipStatus.type,
+      action,
+      responseTime: responseTime || 0,
+      customData
+    }
+    
+    // Track in global IP pool
+    trackIPCall(c, '/api/analytics/visitor')
+    
+    // Log the visitor
+    dataManager.logVisitor(
+      visitorData.ip,
+      visitorData.userAgent,
+      visitorData.referrer,
+      visitorData.timestamp,
+      visitorData.isBot,
+      visitorData.country,
+      visitorData.action
+    )
+    
+    // Determine routing decision
+    let routingDecision = 'clean'
+    
+    if (ipStatus.type === 'blacklisted') {
+      routingDecision = 'blocked'
+    } else if (ipStatus.type === 'whitelisted') {
+      routingDecision = 'clean'
+    } else if (botAnalysis.isBot && botAnalysis.confidence > 80) {
+      routingDecision = botAnalysis.type === 'search_engine' ? 'googleads' : 'decoy'
+    } else if (botAnalysis.confidence > 50) {
+      routingDecision = 'gray'
+    }
+    
+    return c.json({
+      success: true,
+      decision: routingDecision,
+      visitor: visitorData,
+      botAnalysis,
+      ipStatus,
+      domain
+    })
+    
+  } catch (error) {
+    console.error('Traffic logging error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Trafik kaydı sırasında hata oluştu' 
+    }, 500)
+  }
+})
+
+// Helper Functions for IP Management
+
+function isValidIP(ip) {
+  const ipv4Regex = /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/
+  const ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/
+  return ipv4Regex.test(ip) || ipv6Regex.test(ip)
+}
+
+function isValidCIDR(cidr) {
+  const cidrRegex = /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\/([0-9]|[1-2][0-9]|3[0-2])$/
+  return cidrRegex.test(cidr)
+}
+
+function checkIPExistsInLists(ipRules, ip) {
+  // Check in whitelist
+  if (ipRules.whitelist.some(entry => entry.ip === ip)) return 'whitelist'
+  if (ipRules.blacklist.some(entry => entry.ip === ip)) return 'blacklist'
+  if (ipRules.graylist.some(entry => entry.ip === ip)) return 'graylist'
+  return null
+}
+
+function checkIPStatus(ipRules, ip) {
+  // Check whitelist first
+  const whitelisted = ipRules.whitelist.find(entry => entry.ip === ip)
+  if (whitelisted) {
+    return {
+      type: 'whitelisted',
+      found: true,
+      reason: whitelisted.reason,
+      addedAt: whitelisted.addedAt
+    }
+  }
+  
+  // Check blacklist
+  const blacklisted = ipRules.blacklist.find(entry => entry.ip === ip)
+  if (blacklisted) {
+    return {
+      type: 'blacklisted',
+      found: true,
+      reason: blacklisted.reason,
+      addedAt: blacklisted.addedAt
+    }
+  }
+  
+  // Check graylist
+  const graylisted = ipRules.graylist.find(entry => entry.ip === ip)
+  if (graylisted) {
+    return {
+      type: 'graylisted',
+      found: true,
+      reason: graylisted.reason,
+      addedAt: graylisted.addedAt
+    }
+  }
+  
+  // Check CIDR ranges
+  // TODO: Implement CIDR matching logic
+  
+  return {
+    type: 'neutral',
+    found: false,
+    reason: null,
+    addedAt: null
+  }
+}
+
+function calculateIPRiskScore(ip, status) {
+  let score = 50 // Base score
+  
+  if (status.type === 'blacklisted') score = 100
+  else if (status.type === 'whitelisted') score = 0
+  else if (status.type === 'graylisted') score = 75
+  
+  // Additional risk factors can be added here
+  // e.g., GeoIP, known bot networks, etc.
+  
+  return Math.min(100, Math.max(0, score))
+}
+
+function generateIPRecommendations(status, ip) {
+  const recommendations = []
+  
+  if (status.type === 'neutral') {
+    recommendations.push('IP adresi henüz herhangi bir listede değil')
+    recommendations.push('Şüpheli aktivite görürseniz graylist\'e ekleyebilirsiniz')
+  } else if (status.type === 'graylisted') {
+    recommendations.push('Bu IP şüpheli aktivite listesinde')
+    recommendations.push('Davranışını izleyin ve gerekirse blacklist\'e taşıyın')
+  } else if (status.type === 'blacklisted') {
+    recommendations.push('Bu IP engellenen listede - tüm istekleri reddediliyor')
+  } else if (status.type === 'whitelisted') {
+    recommendations.push('Bu IP güvenilir listede - her zaman izin veriliyor')
+  }
+  
+  return recommendations
+}
+
+function generateHourlyBreakdown(hourlyStats) {
+  const breakdown = {}
+  const now = new Date()
+  
+  for (let i = 23; i >= 0; i--) {
+    const hour = new Date(now.getTime() - i * 60 * 60 * 1000)
+    const hourKey = `${hour.getFullYear()}-${String(hour.getMonth() + 1).padStart(2, '0')}-${String(hour.getDate()).padStart(2, '0')}-${String(hour.getHours()).padStart(2, '0')}`
+    
+    breakdown[hourKey] = hourlyStats[hourKey] || { requests: 0, humans: 0, bots: 0 }
+  }
+  
+  return breakdown
+}
+
+function generateCountryBreakdown(countries) {
+  return Object.entries(countries)
+    .sort(([,a], [,b]) => (b.requests || 0) - (a.requests || 0))
+    .slice(0, 20) // Top 20 countries
+    .reduce((obj, [country, data]) => {
+      obj[country] = data
+      return obj
+    }, {})
+}
+
+function generateTopReferrers(visitors) {
+  const referrers = {}
+  visitors.forEach(visitor => {
+    const ref = visitor.referer || 'Direct'
+    referrers[ref] = (referrers[ref] || 0) + 1
+  })
+  
+  return Object.entries(referrers)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 10)
+    .map(([referrer, count]) => ({ referrer, count }))
+}
+
+function generateHourlyDistribution(visitors) {
+  const distribution = {}
+  
+  visitors.forEach(visitor => {
+    const hour = new Date(visitor.timestamp).getHours()
+    distribution[hour] = (distribution[hour] || 0) + 1
+  })
+  
+  return distribution
+}
+
 // Dashboard with navigation
 app.get('/dashboard', (c) => {
   return c.html(`
@@ -7366,9 +9342,14 @@ app.get('/dashboard', (c) => {
                             <i class="fas fa-globe mr-2 text-blue-400"></i>
                             Domain Yönetimi
                         </h2>
-                        <button onclick="showAddDomain()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors">
-                            <i class="fas fa-plus mr-2"></i>Yeni Domain
-                        </button>
+                        <div class="flex space-x-3">
+                            <button onclick="showIPPoolDashboard()" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg transition-colors">
+                                <i class="fas fa-globe-americas mr-2"></i>Global IP Pool
+                            </button>
+                            <button onclick="showAddDomain()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors">
+                                <i class="fas fa-plus mr-2"></i>Yeni Domain
+                            </button>
+                        </div>
                     </div>
                     
                     <div id="domainList" class="space-y-4">
@@ -10103,10 +12084,924 @@ http://localhost:3000"></textarea>
             }
         </style>
 
+        <!-- React Feature Flag System -->
+        <div id="react-dashboard-root" style="display: none;">
+            <!-- React components will be rendered here when enabled -->
+        </div>
+        
+        <!-- React Feature Control Panel (Development Mode) -->
+        <div id="react-controls" style="position: fixed; bottom: 20px; right: 20px; z-index: 9999; background: linear-gradient(135deg, rgba(15,23,42,0.95), rgba(30,41,59,0.95)); backdrop-filter: blur(10px); padding: 16px; border-radius: 12px; font-size: 13px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); border: 1px solid rgba(148,163,184,0.1); min-width: 200px;">
+            <div style="color: #f8fafc; margin-bottom: 12px; font-weight: 600; text-align: center;">
+                <i class="fas fa-atom" style="margin-right: 6px; color: #60a5fa;"></i>React Features
+            </div>
+            <!-- First Row: React UI (full width) -->
+            <button id="toggle-react-ui" onclick="toggleReact()" style="width: 100%; background: linear-gradient(135deg, #4f46e5, #7c3aed); color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(79,70,229,0.3); margin-bottom: 8px;" onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 6px 16px rgba(79,70,229,0.4)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 12px rgba(79,70,229,0.3)'">
+                <i class="fas fa-rocket" style="margin-right: 6px;"></i>Use React UI
+            </button>
+            
+            <!-- Second Row: Real-time + AI (side by side) -->
+            <div style="display: flex; gap: 6px; margin-bottom: 0;">
+                <button id="toggle-websocket" onclick="toggleWebSocket()" style="flex: 1; background: linear-gradient(135deg, #10b981, #059669); color: white; border: none; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 500; transition: all 0.3s ease; box-shadow: 0 3px 8px rgba(16,185,129,0.3);" onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 10px rgba(16,185,129,0.4)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 3px 8px rgba(16,185,129,0.3)'">
+                    <i class="fas fa-play" style="margin-right: 4px;"></i>Real-time
+                </button>
+                <button id="toggle-ai" onclick="toggleAI()" style="flex: 1; background: linear-gradient(135deg, #8b5cf6, #7c3aed); color: white; border: none; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 500; transition: all 0.3s ease; box-shadow: 0 3px 8px rgba(139,92,246,0.3);" onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 10px rgba(139,92,246,0.4)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 3px 8px rgba(139,92,246,0.3)'">
+                    <i class="fas fa-robot" style="margin-right: 4px;"></i>AI Bot
+                </button>
+            </div>
+            <div id="react-status" style="color: #94a3b8; margin-top: 8px; font-size: 11px; text-align: center; font-weight: 500;">
+                <i class="fas fa-code" style="margin-right: 4px; color: #94a3b8;"></i>Vanilla JS Active
+            </div>
+        </div>
+
+        <!-- Load React Feature System -->
+        <script src="/static/react-loader.js"></script>
+        
+        <!-- Load WebSocket Manager -->
+        <script src="/static/websocket-manager.js"></script>
+        
+        <!-- Load AI Behavior Tracker -->
+        <script src="/static/ai-behavior-tracker.js"></script>
+        
+        <!-- Main Dashboard Script -->
         <script src="/static/dashboard.js"></script>
+        
+        <!-- React Status Monitor -->
+        <script>
+            // React status monitor - güncelle button durumunu
+            function updateReactStatus() {
+                const statusDiv = document.getElementById('react-status')
+                const toggleBtn = document.getElementById('toggle-react-ui')
+                const reactRoot = document.getElementById('react-dashboard-root')
+                
+                if (!window.reactFeatures) return
+                
+                // Gerçek duruma göre button ve status'u ayarla
+                if (window.reactFeatures.isEnabled('reactUI')) {
+                    // React aktif
+                    toggleBtn.innerHTML = '<i class="fas fa-arrow-left" style="margin-right: 6px;"></i>Use Vanilla JS'
+                    toggleBtn.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)'
+                    statusDiv.innerHTML = '<i class="fas fa-bolt" style="margin-right: 4px; color: #10b981;"></i>React UI Active'
+                    statusDiv.style.color = '#10b981'
+                    if (reactRoot) reactRoot.style.display = 'block'
+                } else {
+                    // Vanilla JS aktif
+                    toggleBtn.innerHTML = '<i class="fas fa-rocket" style="margin-right: 6px;"></i>Use React UI'
+                    toggleBtn.style.background = 'linear-gradient(135deg, #4f46e5, #7c3aed)'
+                    statusDiv.innerHTML = '<i class="fas fa-code" style="margin-right: 4px; color: #94a3b8;"></i>Vanilla JS Active'
+                    statusDiv.style.color = '#94a3b8'
+                    if (reactRoot) reactRoot.style.display = 'none'
+                }
+            }
+            
+            // WebSocket toggle fonksiyonu
+            function toggleWebSocket() {
+                if (!window.wsManager) {
+                    console.error('WebSocket Manager not loaded')
+                    return
+                }
+                
+                if (window.wsManager.enabled) {
+                    console.log('🔴 Disabling real-time updates...')
+                    window.wsManager.disable()
+                } else {
+                    console.log('🟢 Enabling real-time updates...')
+                    window.wsManager.enable()
+                }
+                
+                // Status'ü hemen güncelle
+                setTimeout(updateWebSocketStatus, 100)
+            }
+            
+            // WebSocket status güncelle
+            function updateWebSocketStatus() {
+                const toggleBtn = document.getElementById('toggle-websocket')
+                
+                if (!window.wsManager) return
+                
+                if (!window.wsManager.enabled) {
+                    // Deaktif - ENABLE butonunu göster
+                    toggleBtn.innerHTML = '<i class="fas fa-play" style="margin-right: 4px;"></i>Real-time'
+                    toggleBtn.style.background = 'linear-gradient(135deg, #10b981, #059669)'
+                } else if (window.wsManager.enabled && !window.wsManager.isConnected) {
+                    // Aktif ama bağlanıyor/hatalı
+                    toggleBtn.innerHTML = '<i class="fas fa-spinner fa-spin" style="margin-right: 4px;"></i>Connecting'
+                    toggleBtn.style.background = 'linear-gradient(135deg, #6366f1, #8b5cf6)'
+                } else if (window.wsManager.enabled && window.wsManager.isConnected) {
+                    // Aktif ve bağlı - DİSABLE butonunu göster
+                    toggleBtn.innerHTML = '<i class="fas fa-stop" style="margin-right: 4px;"></i>Live ON'
+                    toggleBtn.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)'
+                }
+            }
+            
+            // AI toggle fonksiyonu
+            function toggleAI() {
+                if (!window.aiTracker) {
+                    console.error('AI Tracker not loaded')
+                    return
+                }
+                
+                if (window.aiTracker.enabled) {
+                    console.log('🤖 Disabling AI bot detection...')
+                    window.aiTracker.disable()
+                } else {
+                    console.log('🧠 Enabling AI bot detection...')
+                    window.aiTracker.enable()
+                }
+                
+                // Status'ü hemen güncelle
+                setTimeout(updateAIStatus, 100)
+            }
+            
+            // AI status güncelle
+            function updateAIStatus() {
+                const toggleBtn = document.getElementById('toggle-ai')
+                
+                if (!window.aiTracker) return
+                
+                if (window.aiTracker.enabled) {
+                    // AI aktif - Disable butonu göster
+                    toggleBtn.innerHTML = '<i class="fas fa-brain" style="margin-right: 4px;"></i>AI ON'
+                    toggleBtn.style.background = 'linear-gradient(135deg, #ef4444, #dc2626)'
+                } else {
+                    // AI kapalı - Enable butonu göster
+                    toggleBtn.innerHTML = '<i class="fas fa-robot" style="margin-right: 4px;"></i>AI Bot'
+                    toggleBtn.style.background = 'linear-gradient(135deg, #8b5cf6, #7c3aed)'
+                }
+            }
+            
+            // Status'ı periyodik olarak kontrol et
+            setInterval(updateReactStatus, 1000)
+            setInterval(updateWebSocketStatus, 1000)
+            setInterval(updateAIStatus, 1000)
+            
+            // Sayfa yüklendiğinde bir kez çalıştır - feature managers'ın yüklenmesini bekle
+            document.addEventListener('DOMContentLoaded', () => {
+                // Feature managers yüklenene kadar bekle
+                const checkAndUpdate = () => {
+                    if (window.reactFeatures && window.wsManager && window.aiTracker) {
+                        console.log('🎯 All feature managers loaded, updating button states...')
+                        updateReactStatus()
+                        updateWebSocketStatus()
+                        updateAIStatus()
+                    } else {
+                        console.log('⏳ Waiting for feature managers to load...', {
+                            reactFeatures: !!window.reactFeatures,
+                            wsManager: !!window.wsManager,
+                            aiTracker: !!window.aiTracker
+                        })
+                        setTimeout(checkAndUpdate, 100)
+                    }
+                }
+                
+                setTimeout(checkAndUpdate, 200)
+            })
+        </script>
     </body>
     </html>
   `)
 })
+
+// =============================================================================
+// GLOBAL IP POOL MANAGEMENT API ENDPOINTS 
+// =============================================================================
+
+// Track visitor (public endpoint for IP pool tracking)
+app.post('/api/track-visitor', async (c) => {
+  try {
+    const { page, referrer: customReferrer, userAgent: customUA } = await c.req.json()
+    
+    // Track IP in global pool
+    const ip = trackIPCall(c, page || '/track-visitor')
+    
+    return c.json({ 
+      success: true, 
+      message: 'Visitor tracked',
+      ip: ip,
+      timestamp: new Date().toISOString()
+    })
+  } catch (error) {
+    console.error('Visitor tracking error:', error)
+    return c.json({ success: false, message: 'Tracking failed' }, 500)
+  }
+})
+
+// Get IP pool overview and analytics
+app.get('/api/ip/pool', requireAuth, (c) => {
+  const analytics = ipPoolManager.getAnalytics()
+  const needsAnalysis = ipPoolManager.getIPsNeedingAnalysis()
+  
+  return c.json({
+    success: true,
+    analytics,
+    needsAnalysis: needsAnalysis.slice(0, 20), // Top 20 IPs that need analysis
+    timestamp: new Date().toISOString()
+  })
+})
+
+// Get detailed IP pool analytics
+app.get('/api/ip/analytics', requireAuth, (c) => {
+  const analytics = ipPoolManager.getAnalytics()
+  const topVisitors = ipPoolManager.getTopVisitors(50)
+  const needsAnalysis = ipPoolManager.getIPsNeedingAnalysis()
+  
+  return c.json({
+    success: true,
+    ...analytics,
+    topVisitors,
+    needsAnalysis,
+    timestamp: new Date().toISOString()
+  })
+})
+
+// Get specific IP details
+app.get('/api/ip/details/:ip', requireAuth, (c) => {
+  const ip = c.req.param('ip')
+  const details = ipPoolManager.getIPDetails(ip)
+  
+  if (!details) {
+    return c.json({ success: false, message: 'IP not found in pool' }, 404)
+  }
+  
+  const recentActivity = ipPoolManager.getRecentActivity(ip)
+  
+  return c.json({
+    success: true,
+    ip: details.ip,
+    totalVisits: details.totalVisits,
+    classification: details.classification,
+    riskLevel: details.riskLevel,
+    manualStatus: details.manualStatus,
+    manualReason: details.manualReason,
+    manualBy: details.manualBy,
+    manualAt: details.manualAt,
+    firstSeen: details.firstSeen,
+    lastSeen: details.lastSeen,
+    recentActivity,
+    visitHistory: details.visitHistory.slice(-10), // Last 10 visits
+    classificationHistory: details.classificationHistory.slice(-10), // Last 10 classifications
+    endpoints: details.endpoints,
+    userAgents: details.userAgents,
+    referrers: details.referrers
+  })
+})
+
+// Manual IP control (whitelist/blacklist/reset)
+app.post('/api/ip/control', requireAuth, async (c) => {
+  const { ip, action, reason } = await c.req.json()
+  
+  if (!ip || !action) {
+    return c.json({ success: false, message: 'IP and action are required' }, 400)
+  }
+  
+  if (!['whitelist', 'blacklist', 'reset'].includes(action)) {
+    return c.json({ success: false, message: 'Invalid action. Use: whitelist, blacklist, or reset' }, 400)
+  }
+  
+  // Get admin user (you could extract from token in real implementation)
+  const adminUser = 'admin' // In real app, extract from JWT token
+  
+  const success = ipPoolManager.setManualStatus(ip, 
+    action === 'whitelist' ? 'whitelisted' : 
+    action === 'blacklist' ? 'blacklisted' : 'reset', 
+    reason || `Manual ${action} action`, 
+    adminUser)
+  
+  if (success) {
+    const updatedDetails = ipPoolManager.getIPDetails(ip)
+    
+    return c.json({
+      success: true,
+      message: `IP ${ip} successfully ${action === 'reset' ? 'reset to auto-classification' : action + 'ed'}`,
+      ip: ip,
+      newStatus: action === 'reset' ? updatedDetails?.classification : action + 'ed',
+      classification: updatedDetails?.classification,
+      riskLevel: updatedDetails?.riskLevel,
+      manualStatus: updatedDetails?.manualStatus
+    })
+  } else {
+    return c.json({ success: false, message: 'IP not found in pool' }, 404)
+  }
+})
+
+// Bulk IP operations
+app.post('/api/ip/bulk', requireAuth, async (c) => {
+  const { ips, action, reason } = await c.req.json()
+  
+  if (!ips || !Array.isArray(ips) || !action) {
+    return c.json({ success: false, message: 'IPs array and action are required' }, 400)
+  }
+  
+  if (!['whitelist', 'blacklist', 'reset'].includes(action)) {
+    return c.json({ success: false, message: 'Invalid action' }, 400)
+  }
+  
+  const adminUser = 'admin'
+  const results = {
+    success: 0,
+    failed: 0,
+    details: []
+  }
+  
+  for (const ip of ips) {
+    const success = ipPoolManager.setManualStatus(ip,
+      action === 'whitelist' ? 'whitelisted' :
+      action === 'blacklist' ? 'blacklisted' : 'reset',
+      reason || `Bulk ${action} action`,
+      adminUser)
+    
+    if (success) {
+      results.success++
+      results.details.push({ ip, status: 'success', action })
+    } else {
+      results.failed++
+      results.details.push({ ip, status: 'failed', error: 'IP not found' })
+    }
+  }
+  
+  return c.json({
+    success: true,
+    message: `Bulk operation completed: ${results.success} success, ${results.failed} failed`,
+    results
+  })
+})
+
+// Search IPs in pool
+app.get('/api/ip/search', requireAuth, (c) => {
+  const query = c.req.query('q')
+  const classification = c.req.query('classification')
+  const riskLevel = c.req.query('risk')
+  const limit = parseInt(c.req.query('limit') || '50')
+  
+  let results = Array.from(globalIPPool.entries()).map(([ip, data]) => ({
+    ip,
+    totalVisits: data.totalVisits,
+    classification: data.classification,
+    riskLevel: data.riskLevel,
+    manualStatus: data.manualStatus,
+    lastSeen: data.lastSeen,
+    recentActivity: ipPoolManager.getRecentActivity(ip)
+  }))
+  
+  // Filter by search query (IP contains)
+  if (query) {
+    results = results.filter(item => item.ip.includes(query))
+  }
+  
+  // Filter by classification
+  if (classification) {
+    results = results.filter(item => item.classification === classification)
+  }
+  
+  // Filter by risk level
+  if (riskLevel) {
+    results = results.filter(item => item.riskLevel === riskLevel)
+  }
+  
+  // Sort by visit count (highest first) and limit
+  results = results
+    .sort((a, b) => b.totalVisits - a.totalVisits)
+    .slice(0, limit)
+  
+  return c.json({
+    success: true,
+    results,
+    total: results.length,
+    filters: { query, classification, riskLevel, limit }
+  })
+})
+
+// =============================================================================
+// RISK ASSESSMENT CONFIG API ENDPOINTS
+// =============================================================================
+
+// Get current risk assessment configuration
+app.get('/api/ip/config', requireAuth, (c) => {
+  return c.json({
+    success: true,
+    config: riskConfig.getConfig(),
+    message: 'Risk assessment configuration retrieved'
+  })
+})
+
+// Update risk assessment configuration
+app.post('/api/ip/config', requireAuth, async (c) => {
+  try {
+    const newConfig = await c.req.json()
+    
+    // Validate configuration
+    const validation = riskConfig.validateConfig(newConfig)
+    if (!validation.isValid) {
+      return c.json({
+        success: false,
+        message: 'Invalid configuration',
+        errors: validation.errors
+      }, 400)
+    }
+    
+    // Update configuration
+    riskConfig.updateThresholds(newConfig)
+    
+    // Re-classify all existing IPs with new rules
+    let reclassifiedCount = 0
+    for (const [ip, data] of globalIPPool) {
+      if (!data.manualStatus) {
+        const oldClassification = data.classification
+        ipPoolManager.autoClassifyIP(ip)
+        if (data.classification !== oldClassification) {
+          reclassifiedCount++
+        }
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `Risk assessment configuration updated. ${reclassifiedCount} IPs reclassified.`,
+      config: riskConfig.getConfig(),
+      reclassifiedCount
+    })
+  } catch (error) {
+    console.error('Config update error:', error)
+    return c.json({
+      success: false,
+      message: 'Error updating configuration: ' + error.message
+    }, 500)
+  }
+})
+
+// Reset risk assessment configuration to defaults
+app.post('/api/ip/config/reset', requireAuth, (c) => {
+  // Reset to default configuration
+  const defaultConfig = new RiskAssessmentConfig()
+  riskConfig.updateThresholds(defaultConfig.getConfig())
+  
+  // Re-classify all IPs
+  let reclassifiedCount = 0
+  for (const [ip, data] of globalIPPool) {
+    if (!data.manualStatus) {
+      const oldClassification = data.classification
+      ipPoolManager.autoClassifyIP(ip)
+      if (data.classification !== oldClassification) {
+        reclassifiedCount++
+      }
+    }
+  }
+  
+  return c.json({
+    success: true,
+    message: `Configuration reset to defaults. ${reclassifiedCount} IPs reclassified.`,
+    config: riskConfig.getConfig(),
+    reclassifiedCount
+  })
+})
+
+// Preview configuration changes without applying
+app.post('/api/ip/config/preview', requireAuth, async (c) => {
+  try {
+    const newConfig = await c.req.json()
+    
+    // Validate configuration
+    const validation = riskConfig.validateConfig(newConfig)
+    if (!validation.isValid) {
+      return c.json({
+        success: false,
+        message: 'Invalid configuration',
+        errors: validation.errors
+      }, 400)
+    }
+    
+    // Create temporary config for preview
+    const tempConfig = new RiskAssessmentConfig()
+    tempConfig.updateThresholds(newConfig)
+    
+    // Preview changes for existing IPs
+    const previewResults = []
+    for (const [ip, data] of globalIPPool) {
+      if (!data.manualStatus) {
+        const currentClassification = data.classification
+        const newResult = tempConfig.getClassification(data.totalVisits, 0)
+        
+        if (newResult.classification !== currentClassification) {
+          previewResults.push({
+            ip,
+            totalVisits: data.totalVisits,
+            current: {
+              classification: currentClassification,
+              riskLevel: data.riskLevel
+            },
+            new: {
+              classification: newResult.classification,
+              riskLevel: newResult.riskLevel
+            }
+          })
+        }
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: 'Configuration preview generated',
+      previewConfig: tempConfig.getConfig(),
+      affectedIPs: previewResults.length,
+      changes: previewResults.slice(0, 20) // Show first 20 changes
+    })
+  } catch (error) {
+    console.error('Config preview error:', error)
+    return c.json({
+      success: false,
+      message: 'Error generating preview: ' + error.message
+    }, 500)
+  }
+})
+
+// =============================================================================
+// PHASE 2: GEOGRAPHIC & TIME CONTROLS API ENDPOINTS 
+// =============================================================================
+
+// Get domain geographic controls
+app.get('/api/domains/:id/geographic', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const domain = domains.get(id)
+  
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const geoAnalytics = dataManager.getGeographicAnalytics()
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    ...geoAnalytics
+  })
+})
+
+// Update domain geographic controls
+app.post('/api/domains/:id/geographic', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const updates = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    const success = dataManager.updateGeoControls(updates)
+    
+    if (success) {
+      return c.json({
+        success: true,
+        message: 'Geographic controls updated',
+        geoControls: dataManager.data.geoControls
+      })
+    } else {
+      return c.json({ success: false, message: 'Failed to update geographic controls' }, 500)
+    }
+  } catch (error) {
+    console.error('Geographic controls update error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Geographic controls güncellenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Test geographic access for an IP
+app.post('/api/domains/:id/geographic/test', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const { ip, userAgent, referer } = await c.req.json()
+  
+  if (!ip) {
+    return c.json({ success: false, message: 'IP address required' }, 400)
+  }
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const geoCheck = dataManager.checkGeographicAccess(ip, userAgent, referer)
+  
+  return c.json({
+    success: true,
+    ip: ip,
+    ...geoCheck
+  })
+})
+
+// Get domain time controls
+app.get('/api/domains/:id/time', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const domain = domains.get(id)
+  
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const timeAnalytics = dataManager.getTimeAnalytics()
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    ...timeAnalytics
+  })
+})
+
+// Update domain time controls
+app.post('/api/domains/:id/time', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const updates = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  
+  try {
+    const success = dataManager.updateTimeControls(updates)
+    
+    if (success) {
+      return c.json({
+        success: true,
+        message: 'Time controls updated',
+        timeControls: dataManager.data.timeControls
+      })
+    } else {
+      return c.json({ success: false, message: 'Failed to update time controls' }, 500)
+    }
+  } catch (error) {
+    console.error('Time controls update error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Time controls güncellenirken hata oluştu: ' + error.message 
+    }, 500)
+  }
+})
+
+// Test time access for current or specific time
+app.post('/api/domains/:id/time/test', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const { timestamp, timezone } = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const timeCheck = dataManager.checkTimeAccess(
+    timestamp ? parseInt(timestamp) : Date.now(), 
+    timezone
+  )
+  
+  return c.json({
+    success: true,
+    ...timeCheck,
+    testedTime: {
+      timestamp: timestamp || Date.now(),
+      timezone: timezone || dataManager.data.timeControls.timezone
+    }
+  })
+})
+
+// Combined access control test (IP + Geographic + Time)
+app.post('/api/domains/:id/access-test', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const { ip, userAgent, referer, timestamp, timezone } = await c.req.json()
+  
+  if (!ip) {
+    return c.json({ success: false, message: 'IP address required' }, 400)
+  }
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const accessResult = dataManager.checkAccess(
+    ip, 
+    userAgent || '', 
+    referer || '', 
+    timestamp ? parseInt(timestamp) : Date.now(), 
+    timezone
+  )
+  
+  return c.json({
+    success: true,
+    ip: ip,
+    ...accessResult
+  })
+})
+
+// Get GeoIP information for an IP (mock service)
+app.get('/api/geoip/:ip', requireAuth, (c) => {
+  const ip = c.req.param('ip')
+  
+  // Create a temporary manager to use the GeoIP function
+  const tempManager = new (class {
+    getCountryFromIP = getDomainDataManager('temp').getCountryFromIP
+  })()
+  
+  const country = tempManager.getCountryFromIP(ip)
+  
+  return c.json({
+    success: true,
+    ip: ip,
+    country: country,
+    mock: true,
+    note: 'This is a mock GeoIP service. In production, use MaxMind GeoLite2 or similar.'
+  })
+})
+
+// ====================================================================
+// PHASE 3: CAMPAIGN TRACKING & RATE LIMITING API ENDPOINTS
+// ====================================================================
+
+// Get domain campaigns
+app.get('/api/domains/:id/campaigns', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const domain = domains.get(id)
+  
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const campaignAnalytics = dataManager.getCampaignAnalytics()
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    ...campaignAnalytics
+  })
+})
+
+// Update domain campaigns settings
+app.put('/api/domains/:id/campaigns', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const settings = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  try {
+    const dataManager = getDomainDataManager(domain.name)
+    const updatedCampaigns = dataManager.updateCampaignSettings(settings)
+    
+    return c.json({
+      success: true,
+      message: 'Campaign settings updated successfully',
+      campaigns: updatedCampaigns
+    })
+  } catch (error) {
+    console.error('Campaign settings update error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Failed to update campaign settings: ' + error.message 
+    }, 500)
+  }
+})
+
+// Track campaign click
+app.post('/api/domains/:id/campaigns/track', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const campaignData = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  try {
+    const dataManager = getDomainDataManager(domain.name)
+    dataManager.trackCampaignClick({
+      ...campaignData,
+      timestamp: Date.now()
+    })
+    
+    await dataManager.save()
+    
+    return c.json({
+      success: true,
+      message: 'Campaign click tracked successfully'
+    })
+  } catch (error) {
+    console.error('Campaign tracking error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Failed to track campaign click: ' + error.message 
+    }, 500)
+  }
+})
+
+// Get domain rate limiting status
+app.get('/api/domains/:id/rate-limiting', requireAuth, (c) => {
+  const id = c.req.param('id')
+  const domain = domains.get(id)
+  
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  const dataManager = getDomainDataManager(domain.name)
+  const rateLimitingStatus = dataManager.getRateLimitingStatus()
+  
+  return c.json({
+    success: true,
+    domain: domain.name,
+    ...rateLimitingStatus
+  })
+})
+
+// Update domain rate limiting settings
+app.put('/api/domains/:id/rate-limiting', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const settings = await c.req.json()
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  try {
+    const dataManager = getDomainDataManager(domain.name)
+    const updatedSettings = dataManager.updateRateLimitingSettings(settings)
+    
+    return c.json({
+      success: true,
+      message: 'Rate limiting settings updated successfully',
+      rateLimiting: updatedSettings
+    })
+  } catch (error) {
+    console.error('Rate limiting settings update error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Failed to update rate limiting settings: ' + error.message 
+    }, 500)
+  }
+})
+
+// Check rate limit for IP
+app.post('/api/domains/:id/rate-limiting/check', requireAuth, async (c) => {
+  const id = c.req.param('id')
+  const { ip, userAgent } = await c.req.json()
+  
+  if (!ip) {
+    return c.json({ success: false, message: 'IP address required' }, 400)
+  }
+  
+  const domain = domains.get(id)
+  if (!domain) {
+    return c.json({ success: false, message: 'Domain bulunamadı' }, 404)
+  }
+  
+  try {
+    const dataManager = getDomainDataManager(domain.name)
+    const rateLimitResult = dataManager.checkRateLimit(ip, userAgent || '')
+    
+    return c.json({
+      success: true,
+      ip: ip,
+      ...rateLimitResult
+    })
+  } catch (error) {
+    console.error('Rate limit check error:', error)
+    return c.json({ 
+      success: false, 
+      message: 'Failed to check rate limit: ' + error.message 
+    }, 500)
+  }
+})
+
+// Helper function to track IP on every API call
+function trackIPCall(c, endpoint) {
+  try {
+    const ip = c.req.header('CF-Connecting-IP') || 
+              c.req.header('X-Forwarded-For') || 
+              c.req.header('X-Real-IP') || 
+              '127.0.0.1'
+    
+    const userAgent = c.req.header('User-Agent') || ''
+    const referrer = c.req.header('Referer') || ''
+    
+    // Track in global IP pool
+    ipPoolManager.trackIP(ip, userAgent, referrer, endpoint)
+    
+    return ip
+  } catch (error) {
+    console.error('IP tracking error:', error)
+    return null
+  }
+}
 
 export default app

@@ -60,7 +60,7 @@ Each domain has its own comprehensive configuration stored as JSON:
     recentVisitors: [{ ip, userAgent, referer, timestamp, isBot, country, action }]
   },
   
-  // Geographic Controls (Phase 2) 🔄 STRUCTURE READY
+  // Geographic Controls (Phase 2) ✅ IMPLEMENTED
   geoControls: {
     allowedCountries: ['US', 'CA'],
     blockedCountries: ['CN', 'RU'],
@@ -68,7 +68,7 @@ Each domain has its own comprehensive configuration stored as JSON:
     defaultAction: 'allow'
   },
   
-  // Time-based Access (Phase 2) 🔄 STRUCTURE READY
+  // Time-based Access (Phase 2) ✅ IMPLEMENTED
   timeControls: {
     businessHours: { start: 9, end: 17, days: ['mon-fri'] },
     rules: [{ days, hours, action }],
@@ -173,16 +173,20 @@ POST   /api/traffic/log                     - Enhanced traffic logging
 ## ✅ ALL PHASES COMPLETED
 
 ### **Phase 2: Geographic & Time Controls** ✅ IMPLEMENTED
-- **Country-based Access Control**: Allow/block by visitor country
-- **Time-based Restrictions**: Business hours, weekend rules
-- **Geographic Routing**: Redirect users based on location
-- **Holiday Scheduling**: Automatic holiday traffic blocking
+- **Country-based Access Control**: Allow/block by visitor country with GeoIP detection
+- **Time-based Restrictions**: Business hours, weekend rules, timezone-aware controls
+- **Geographic Routing**: Redirect users based on location with custom redirect URLs
+- **Holiday Scheduling**: Automatic holiday traffic blocking with date range support
+- **Combined Access Control**: Integrated IP + Geographic + Time validation system
+- **Analytics Integration**: Geographic and time-based analytics tracking
 
-### **Phase 3: Campaign Tracking & Rate Limiting** ✅ IMPLEMENTED
-- **UTM Campaign Tracking**: Track campaign performance and attribution
-- **Source Analysis**: Detailed referrer and campaign analytics
-- **Advanced Rate Limiting**: Per-IP, per-session, and burst limits
-- **Custom Parameters**: Track custom URL parameters and events
+### **Phase 3: Campaign Tracking & Rate Limiting** ✅ IMPLEMENTED & TESTED
+- **UTM Campaign Tracking**: Track campaign performance and attribution with real-time analytics
+- **Source Analysis**: Detailed referrer and campaign analytics with top campaigns/sources breakdown
+- **Advanced Rate Limiting**: Per-IP, per-session, and burst limits with bot-specific controls
+- **Custom Parameters**: Track custom URL parameters and events with configurable UTM sources
+- **Real-time Testing**: Built-in campaign and rate limiting test interfaces
+- **Analytics Dashboard**: Comprehensive 4-tab interface for campaign and rate limiting management
 
 ### **Phase 4: Video Delivery System** ✅ IMPLEMENTED
 - **Single-View Tracking**: Prevent multiple video views per user
@@ -258,20 +262,32 @@ GET    /api/domains/{id}/analytics/bots     - Advanced bot detection analytics (
 GET    /api/domains/{id}/visitors/live      - Live visitor activity feed
 ```
 
-### **Phase 2-3: Geographic, Time & Campaign Controls**
+### **Phase 2: Geographic & Time Controls** ✅ IMPLEMENTED
 ```
 # Geographic Controls
-GET    /api/domains/{id}/geo-controls       - Geographic access rules
-POST   /api/domains/{id}/geo-controls       - Update geographic settings
-GET    /api/countries                       - Available countries list
+GET    /api/domains/{id}/geographic         - Get geographic control settings
+PUT    /api/domains/{id}/geographic         - Update geographic control settings
+POST   /api/domains/{id}/access-test        - Test combined access control (IP+Geo+Time)
 
 # Time-based Controls  
-GET    /api/domains/{id}/time-controls      - Time-based access rules
-POST   /api/domains/{id}/time-controls      - Update time-based settings
+GET    /api/domains/{id}/time               - Get time-based control settings
+PUT    /api/domains/{id}/time               - Update time-based control settings
 
+# Combined Access Control
+POST   /api/domains/{id}/access-test        - Test visitor access with all controls
+```
+
+### **Phase 3: Campaign Tracking & Rate Limiting** ✅ IMPLEMENTED & TESTED
+```
 # Campaign Tracking
-GET    /api/domains/{id}/campaigns          - Campaign analytics and tracking
-POST   /api/domains/{id}/campaigns          - Add campaign tracking rules
+GET    /api/domains/{id}/campaigns          - Get campaign analytics and settings
+PUT    /api/domains/{id}/campaigns          - Update campaign tracking settings  
+POST   /api/domains/{id}/campaigns/track    - Track campaign click with UTM parameters
+
+# Rate Limiting
+GET    /api/domains/{id}/rate-limiting      - Get rate limiting status and configuration
+PUT    /api/domains/{id}/rate-limiting      - Update rate limiting settings
+POST   /api/domains/{id}/rate-limiting/check - Check rate limit for specific IP
 ```
 
 ### **Phase 4: Video Delivery System**
@@ -710,6 +726,637 @@ The settings system integrates seamlessly with all other platform components:
 
 This comprehensive settings system provides enterprise-level control over every aspect of the Traffic Management Platform while maintaining ease of use and operational efficiency.
 
+## 🌍 PHASE 2: Geographic & Time Controls - Complete Usage Guide
+
+### **📍 Geographic Controls System**
+**Advanced country-based access control with GeoIP detection and custom routing:**
+
+#### **🌍 Country-based Access Control**
+- **Allowed Countries**: Specify country codes (US, CA, UK, DE) to allow access
+- **Blocked Countries**: Block specific countries from accessing content
+- **Default Action**: Set fallback behavior for countries not in allow/block lists
+- **GeoIP Detection**: Automatic visitor country detection using IP geolocation
+
+**Configuration Example:**
+```json
+{
+  "allowedCountries": ["US", "CA", "UK", "AU"],
+  "blockedCountries": ["CN", "RU", "KP"],
+  "defaultAction": "allow",
+  "redirectRules": {
+    "DE": "germany.example.com",
+    "FR": "france.example.com"
+  }
+}
+```
+
+#### **🔄 Geographic Routing & Redirects**
+- **Custom Redirects**: Redirect specific countries to different domains
+- **Regional Routing**: Route EU countries to EU-specific content
+- **Landing Page Customization**: Show country-specific landing pages
+- **Redirect Analytics**: Track redirect performance and conversion rates
+
+#### **📊 Geographic Analytics Integration**
+- **Country Statistics**: Track visitor distribution by country
+- **Access Patterns**: Monitor which countries are allowed/blocked
+- **Redirect Performance**: Analyze redirect success rates
+- **Geographic Trends**: Identify traffic patterns by region
+
+### **⏰ Time-based Access Controls**
+**Sophisticated time and schedule-based visitor management:**
+
+#### **🕒 Business Hours Configuration**
+- **Operating Hours**: Set start/end times for content availability
+- **Day Restrictions**: Configure weekday/weekend access rules
+- **Timezone Support**: All times are timezone-aware for global accuracy
+- **Multiple Time Zones**: Support different time zones per domain
+
+**Business Hours Example:**
+```json
+{
+  "businessHours": {
+    "start": 9,
+    "end": 17,
+    "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+    "timezone": "America/New_York"
+  }
+}
+```
+
+#### **📅 Advanced Time Rules**
+- **Custom Schedule Rules**: Create complex time-based access patterns
+- **Weekend Restrictions**: Different rules for weekends vs weekdays
+- **Holiday Blocks**: Automatic blocking during holidays
+- **Emergency Hours**: Override normal hours for special events
+
+**Time Rules Example:**
+```json
+{
+  "rules": [
+    {
+      "days": ["saturday", "sunday"],
+      "hours": { "start": 10, "end": 14 },
+      "action": "block",
+      "reason": "Weekend maintenance"
+    },
+    {
+      "days": ["monday"],
+      "hours": { "start": 6, "end": 9 },
+      "action": "redirect",
+      "redirectUrl": "maintenance.example.com"
+    }
+  ]
+}
+```
+
+#### **🎄 Holiday Management**
+- **Holiday Blocks**: Automatically block access during holidays
+- **Date Range Support**: Set start/end dates for holiday periods
+- **Recurring Holidays**: Configure annual recurring holiday blocks
+- **Custom Messages**: Show holiday-specific messages to visitors
+
+**Holiday Configuration:**
+```json
+{
+  "holidayBlocks": [
+    {
+      "name": "Christmas Break",
+      "startDate": "2024-12-24",
+      "endDate": "2024-12-26",
+      "action": "block",
+      "message": "Site unavailable during Christmas holiday"
+    }
+  ]
+}
+```
+
+### **🔗 Combined Access Control System**
+**Integrated IP + Geographic + Time validation for comprehensive visitor management:**
+
+#### **🛡️ Multi-layer Validation**
+The system performs validation in this order:
+1. **IP Rules Check**: Whitelist/blacklist/graylist validation
+2. **Geographic Validation**: Country-based access control
+3. **Time Validation**: Business hours and schedule compliance
+
+#### **⚖️ Priority System**
+- **Whitelist Priority**: Whitelisted IPs bypass geo and time restrictions
+- **Blacklist Override**: Blacklisted IPs are always blocked
+- **Geographic Second**: Country rules apply after IP validation
+- **Time Final**: Time restrictions apply last in the chain
+
+#### **📈 Access Testing & Simulation**
+- **Real-time Testing**: Test visitor access with specific IP, country, and time
+- **Scenario Simulation**: Simulate different visitor scenarios
+- **Rule Validation**: Verify complex rule interactions
+- **Performance Testing**: Test rule processing speed
+
+### **🎛️ Dashboard Interface Guide**
+**Complete walkthrough of the Geographic & Time Controls interface:**
+
+#### **📋 Tab 1: Geographic Controls**
+- **Country Management**: Add/remove allowed and blocked countries
+- **Country Search**: Search and select countries from comprehensive list
+- **Redirect Configuration**: Set up country-specific redirects
+- **Default Action**: Configure fallback behavior for unmatched countries
+
+**Step-by-step Usage:**
+1. Click the blue globe icon on any domain
+2. Select "Geographic Controls" tab
+3. Add allowed countries: Type country codes (US, CA, UK)
+4. Add blocked countries: Type country codes to block
+5. Set redirects: Map country codes to redirect URLs
+6. Choose default action: "allow" or "block" for unmatched countries
+7. Click "Update Settings" to save changes
+
+#### **⏰ Tab 2: Time Controls**
+- **Business Hours Setup**: Configure operating hours with timezone
+- **Day Selection**: Choose specific days for business hours
+- **Custom Rules**: Create advanced time-based rules
+- **Holiday Management**: Add and manage holiday blocks
+
+**Step-by-step Usage:**
+1. Navigate to "Time Controls" tab
+2. Set business hours: Start time, end time, and timezone
+3. Select operating days: Check weekdays/weekends
+4. Add custom rules: Set specific day/time restrictions
+5. Configure holidays: Add holiday date ranges
+6. Click "Update Settings" to save configuration
+
+#### **📊 Tab 3: Analytics**
+- **Geographic Statistics**: View visitor distribution by country
+- **Time Patterns**: Analyze traffic patterns by hour/day
+- **Access Events**: Review allowed/blocked/redirected visitors
+- **Performance Metrics**: Monitor rule processing efficiency
+
+#### **🧪 Tab 4: Access Test**
+- **IP Simulation**: Enter IP address to test
+- **Country Override**: Specify country for testing
+- **Time Simulation**: Set custom date/time for testing
+- **Result Analysis**: View detailed access decision breakdown
+
+**Test Usage:**
+1. Go to "Access Test" tab
+2. Enter IP address (or leave blank for current IP)
+3. Select country from dropdown (optional)
+4. Set custom timestamp (optional)
+5. Click "Test Access" to see results
+6. Review detailed decision chain and final action
+
+### **🔧 API Integration Guide**
+**Complete API reference for programmatic access:**
+
+#### **Geographic Controls API**
+```bash
+# Get current geographic settings
+GET /api/domains/1759781200503/geographic
+
+# Update geographic settings
+PUT /api/domains/1759781200503/geographic
+Content-Type: application/json
+{
+  "allowedCountries": ["US", "CA", "UK"],
+  "blockedCountries": ["CN", "RU"],
+  "defaultAction": "allow",
+  "redirectRules": {
+    "DE": "germany.example.com"
+  }
+}
+```
+
+#### **Time Controls API**
+```bash
+# Get current time settings
+GET /api/domains/1759781200503/time
+
+# Update time settings
+PUT /api/domains/1759781200503/time
+Content-Type: application/json
+{
+  "businessHours": {
+    "start": 9,
+    "end": 17,
+    "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+    "timezone": "America/New_York"
+  },
+  "rules": [],
+  "holidayBlocks": []
+}
+```
+
+#### **Combined Access Test API**
+```bash
+# Test visitor access
+POST /api/domains/1759781200503/access-test
+Content-Type: application/json
+{
+  "ip": "192.168.1.100",
+  "country": "US",
+  "timestamp": 1699123456789,
+  "userAgent": "Mozilla/5.0...",
+  "referer": "https://google.com"
+}
+
+# Response
+{
+  "allowed": true,
+  "controls": {
+    "ip": { "status": "whitelist", "action": "allow" },
+    "geographic": { "country": "US", "action": "allow" },
+    "time": { "inBusinessHours": true, "action": "allow" }
+  },
+  "finalAction": "allow",
+  "reason": ["IP whitelisted", "Country allowed", "Within business hours"]
+}
+```
+
+### **🎯 Best Practices & Recommendations**
+
+#### **🌍 Geographic Controls Best Practices**
+- **Start Conservative**: Begin with allowed countries list, expand gradually
+- **Monitor Analytics**: Review country-based analytics before blocking
+- **Test Redirects**: Verify redirect URLs work correctly for target countries
+- **Consider VPNs**: Account for VPN usage in geographic targeting
+
+#### **⏰ Time Controls Best Practices**
+- **Account for Timezones**: Always set correct timezone for target audience
+- **Test Edge Cases**: Test behavior at business hour boundaries
+- **Plan Maintenance**: Use time controls for planned maintenance windows
+- **Monitor Impact**: Track how time restrictions affect traffic patterns
+
+#### **🔗 Integration Best Practices**
+- **Test Combinations**: Verify IP + Geographic + Time rule interactions
+- **Document Rules**: Keep clear documentation of complex rule combinations
+- **Regular Review**: Periodically review and update control settings
+- **Performance Monitor**: Monitor rule processing performance impact
+
+### **🚀 Advanced Use Cases**
+
+#### **🌐 Multi-Regional Business**
+**Setup for businesses serving different regions:**
+- Configure allowed countries for each target market
+- Set up country-specific redirects to regional sites
+- Use business hours matching each region's timezone
+- Monitor regional traffic patterns and conversion rates
+
+#### **🕒 Scheduled Content Release**
+**Time-sensitive content management:**
+- Set up time-based access for scheduled releases
+- Configure different access rules for different content types
+- Use holiday blocks for seasonal content restrictions
+- Monitor access patterns around scheduled events
+
+#### **🛡️ Security-focused Configuration**
+**Enhanced security through access controls:**
+- Block high-risk countries based on threat intelligence
+- Combine IP blacklisting with geographic restrictions
+- Use time controls to limit attack surface during off-hours
+- Monitor blocked attempts and adjust rules accordingly
+
+This comprehensive Phase 2 system provides enterprise-level geographic and time-based access control, perfect for sophisticated traffic management scenarios while maintaining ease of use and powerful analytics capabilities.
+
+## 📊 PHASE 3: Campaign Tracking & Rate Limiting - Complete Usage Guide
+
+### **📈 UTM Campaign Tracking System**
+**Advanced campaign performance tracking with real-time analytics and attribution:**
+
+#### **🎯 Campaign Analytics & Attribution**
+- **UTM Parameter Tracking**: Automatic tracking of utm_source, utm_campaign, utm_medium, utm_content, utm_term
+- **Campaign Performance**: Track clicks, conversions, and performance metrics per campaign
+- **Source Analysis**: Detailed breakdown of traffic sources and their effectiveness
+- **Custom Parameter Support**: Track custom URL parameters beyond standard UTM parameters
+
+**UTM Configuration Example:**
+```json
+{
+  "enabled": true,
+  "utmTracking": true,
+  "validUtmSources": ["facebook", "google", "twitter", "email", "linkedin"],
+  "customParameters": ["custom_param1", "affiliate_id", "promo_code"]
+}
+```
+
+#### **📊 Campaign Performance Analytics**
+- **Real-time Tracking**: Live campaign click tracking and performance monitoring
+- **Top Campaigns**: Identify highest-performing campaigns by clicks and conversions
+- **Top Sources**: Analyze which traffic sources drive the most valuable traffic
+- **Recent Activity Feed**: Live feed of campaign clicks with detailed attribution data
+
+**Campaign Data Structure:**
+```json
+{
+  "campaign_name": {
+    "clicks": 1250,
+    "conversions": 89,
+    "sources": {
+      "google": 800,
+      "facebook": 300,
+      "email": 150
+    },
+    "countries": {
+      "US": 650,
+      "CA": 200,
+      "UK": 180
+    },
+    "firstSeen": "2024-01-15T10:00:00Z",
+    "lastSeen": "2024-10-06T20:29:09Z"
+  }
+}
+```
+
+#### **🔗 Campaign URL Examples**
+- **Google Ads**: `https://example.com/?utm_source=google&utm_campaign=summer_sale&utm_medium=cpc`
+- **Facebook Ads**: `https://example.com/?utm_source=facebook&utm_campaign=product_launch&utm_medium=social`
+- **Email Marketing**: `https://example.com/?utm_source=email&utm_campaign=newsletter&utm_medium=email`
+- **Custom Parameters**: `https://example.com/?utm_source=affiliate&custom_param1=special_offer&promo_code=SAVE20`
+
+### **⚡ Advanced Rate Limiting System**
+**Comprehensive traffic control with intelligent bot detection and customizable limits:**
+
+#### **🚦 Multi-Layer Rate Limiting**
+- **Per-IP Limits**: Control requests per IP address per time window
+- **Per-Session Limits**: Manage session-based request quotas
+- **Burst Protection**: Prevent rapid-fire request attacks
+- **Bot-Specific Limits**: Different rate limits for detected bots vs human traffic
+
+**Rate Limiting Configuration:**
+```json
+{
+  "enabled": true,
+  "rules": {
+    "perIP": { "requests": 60, "window": 60 },      // 60 requests per minute per IP
+    "perSession": { "requests": 300, "window": 3600 }, // 300 requests per hour per session
+    "burst": { "requests": 10, "window": 1 }         // Max 10 requests per second
+  },
+  "botLimiting": {
+    "perIP": { "requests": 10, "window": 60 },      // 10 requests per minute for bots
+    "burst": { "requests": 2, "window": 1 }         // Max 2 requests per second for bots
+  }
+}
+```
+
+#### **🤖 Intelligent Bot Rate Limiting**
+- **Bot Detection Integration**: Automatic bot detection with specific rate limits
+- **Legitimate Bot Allowance**: Higher limits for verified search engine bots
+- **Malicious Bot Protection**: Aggressive limiting for suspicious bot traffic
+- **Dynamic Adjustment**: Rate limits adjust based on traffic patterns
+
+#### **📈 Rate Limiting Analytics**
+- **Real-time Load Monitoring**: Current active connections and request rates
+- **Alert System**: Automatic alerts when thresholds are exceeded
+- **Performance Metrics**: Track rate limiting effectiveness and false positives
+- **Historical Analysis**: Review rate limiting performance over time
+
+### **🎛️ Dashboard Interface Guide - Campaign & Rate Limiting**
+**Complete walkthrough of the Campaign Tracking & Rate Limiting interface:**
+
+#### **🔧 Accessing the Interface**
+1. Click the orange **chart-line icon** (📊) on any domain in the domain list
+2. The modal opens with a comprehensive 4-tab system for full control
+
+#### **📋 Tab 1: Campaign Tracking**
+**Complete campaign management and configuration:**
+
+**Step-by-step Setup:**
+1. **Enable Campaign Tracking**: Toggle campaign tracking on/off
+2. **Configure UTM Tracking**: Enable/disable UTM parameter parsing
+3. **Set Valid UTM Sources**: Define allowed traffic sources (facebook, google, etc.)
+4. **Add Custom Parameters**: Specify additional tracking parameters
+5. **Save Settings**: Apply configuration changes
+
+**Active Campaigns Table:**
+- View all active campaigns with click counts
+- See traffic sources breakdown per campaign
+- Monitor campaign performance and last activity
+- Export campaign data for external analysis
+
+#### **⚡ Tab 2: Rate Limiting**
+**Advanced traffic control configuration:**
+
+**General Rate Limits Setup:**
+1. **Enable Rate Limiting**: Master toggle for rate limiting system
+2. **Per-IP Limits**: Set requests per minute per IP address
+3. **Session Limits**: Configure requests per hour per session
+4. **Burst Protection**: Set maximum requests per second
+
+**Bot Rate Limits Setup:**
+1. **Bot Detection Integration**: Automatic bot-specific limiting
+2. **Bot IP Limits**: Stricter limits for detected bot traffic
+3. **Bot Burst Limits**: Maximum bot requests per second
+
+**Current Load Monitoring:**
+- **Active Connections**: Real-time connection count
+- **Rate Limiting Status**: System enabled/disabled status
+- **Active Alerts**: Current threshold violations and warnings
+
+#### **📊 Tab 3: Analytics**
+**Comprehensive performance analytics and insights:**
+
+**Campaign Performance Analytics:**
+- **Top Campaigns Chart**: Visual ranking of highest-performing campaigns
+- **Top Sources Chart**: Traffic source effectiveness breakdown
+- **Recent Activity Table**: Live campaign click feed with attribution details
+- **Performance Trends**: Historical campaign performance analysis
+
+**Rate Limiting Performance:**
+- **Current Load Metrics**: Real-time traffic and limiting statistics
+- **Threshold Analysis**: How close to limits various IPs are running
+- **Bot vs Human Traffic**: Breakdown of traffic types and limiting effectiveness
+- **Historical Performance**: Rate limiting effectiveness over time
+
+#### **🧪 Tab 4: Test & Monitor**
+**Real-time testing and validation interface:**
+
+**Campaign Tracking Test:**
+1. **Enter UTM Parameters**: Test utm_source, utm_campaign, utm_medium
+2. **Set Referrer**: Specify the referring website
+3. **Execute Test**: Run campaign tracking simulation
+4. **View Results**: See detailed tracking results and data storage
+
+**Rate Limiting Test:**
+1. **Enter Test IP**: Specify IP address to test
+2. **Set User Agent**: Define user agent string for bot detection
+3. **Execute Test**: Run rate limiting check
+4. **View Results**: See allow/block decision with detailed reasoning
+
+### **🔧 API Integration Guide - Phase 3**
+
+#### **Campaign Tracking API Usage:**
+
+**Get Campaign Analytics:**
+```bash
+GET /api/domains/{id}/campaigns
+Authorization: Bearer {token}
+
+# Response:
+{
+  "success": true,
+  "domain": "example.com",
+  "enabled": true,
+  "totalClicks": 1250,
+  "totalCampaigns": 15,
+  "totalSources": 8,
+  "topCampaigns": [
+    ["summer_sale", {"clicks": 500, "conversions": 45}],
+    ["product_launch", {"clicks": 300, "conversions": 32}]
+  ],
+  "topSources": [
+    ["google", {"clicks": 800}],
+    ["facebook", {"clicks": 450}]
+  ],
+  "recentClicks": [...],
+  "settings": {
+    "utmTracking": true,
+    "validUtmSources": ["facebook", "google", "twitter"],
+    "customParameters": []
+  }
+}
+```
+
+**Update Campaign Settings:**
+```bash
+PUT /api/domains/{id}/campaigns
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "enabled": true,
+  "utmTracking": true,
+  "validUtmSources": ["facebook", "google", "twitter", "linkedin"],
+  "customParameters": ["affiliate_id", "promo_code"]
+}
+```
+
+**Track Campaign Click:**
+```bash
+POST /api/domains/{id}/campaigns/track
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "utmSource": "google",
+  "utmCampaign": "summer_sale",
+  "utmMedium": "cpc",
+  "utmContent": "ad_variant_1",
+  "utmTerm": "buy_now",
+  "referrer": "https://google.com",
+  "ip": "192.168.1.100",
+  "country": "US"
+}
+```
+
+#### **Rate Limiting API Usage:**
+
+**Get Rate Limiting Status:**
+```bash
+GET /api/domains/{id}/rate-limiting
+Authorization: Bearer {token}
+
+# Response:
+{
+  "success": true,
+  "domain": "example.com",
+  "enabled": true,
+  "rules": {
+    "perIP": {"requests": 60, "window": 60},
+    "perSession": {"requests": 300, "window": 3600},
+    "burst": {"requests": 10, "window": 1}
+  },
+  "botLimiting": {
+    "perIP": {"requests": 10, "window": 60},
+    "burst": {"requests": 2, "window": 1}
+  },
+  "currentLoad": 25,
+  "alerts": []
+}
+```
+
+**Update Rate Limiting Settings:**
+```bash
+PUT /api/domains/{id}/rate-limiting
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "enabled": true,
+  "rules": {
+    "perIP": {"requests": 120, "window": 60},
+    "perSession": {"requests": 500, "window": 3600},
+    "burst": {"requests": 15, "window": 1}
+  },
+  "botLimiting": {
+    "perIP": {"requests": 20, "window": 60},
+    "burst": {"requests": 3, "window": 1}
+  }
+}
+```
+
+**Check Rate Limit for IP:**
+```bash
+POST /api/domains/{id}/rate-limiting/check
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "ip": "192.168.1.100",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+}
+
+# Response:
+{
+  "success": true,
+  "ip": "192.168.1.100",
+  "allowed": true,
+  "reason": null,
+  "retryAfter": null
+}
+```
+
+### **🎯 Best Practices & Optimization**
+
+#### **📈 Campaign Tracking Best Practices**
+- **Consistent UTM Naming**: Use standardized campaign and source names
+- **Regular Analytics Review**: Monitor campaign performance weekly
+- **A/B Test Campaigns**: Compare campaign variations for optimization
+- **Source Attribution**: Properly attribute traffic to the correct sources
+
+#### **⚡ Rate Limiting Best Practices**
+- **Gradual Implementation**: Start with conservative limits and adjust based on traffic patterns
+- **Bot Differentiation**: Use different limits for bots vs human traffic
+- **Monitor False Positives**: Ensure legitimate users aren't blocked
+- **Peak Traffic Planning**: Adjust limits during high-traffic periods
+
+#### **🔗 Integration Best Practices**
+- **Automated Alerts**: Set up notifications for rate limiting violations
+- **Campaign ROI Tracking**: Integrate with analytics for conversion tracking
+- **Performance Monitoring**: Regular review of both systems' effectiveness
+- **Data Export**: Regular backup of campaign and rate limiting data
+
+### **🚀 Advanced Use Cases - Phase 3**
+
+#### **📊 E-commerce Campaign Optimization**
+**Multi-channel campaign tracking for online stores:**
+- Track UTM campaigns across Google Ads, Facebook Ads, email marketing
+- Monitor conversion rates by campaign and traffic source
+- Identify highest-value traffic sources for budget allocation
+- Implement rate limiting to prevent bot scraping of product pages
+
+#### **📱 SaaS Marketing Attribution**
+**Complete marketing funnel analysis:**
+- Track trial signups by campaign source and medium
+- Monitor conversion from trial to paid subscription by campaign
+- Rate limit API endpoints to prevent abuse while allowing legitimate usage
+- Analyze campaign effectiveness for different customer segments
+
+#### **🛡️ High-Traffic Site Protection**
+**Enterprise-level traffic management:**
+- Implement aggressive rate limiting during traffic spikes
+- Use campaign tracking to identify organic vs paid traffic quality
+- Bot-specific rate limits to allow search engines while blocking scrapers
+- Real-time monitoring and automatic adjustment of rate limits
+
+This comprehensive Phase 3 system provides enterprise-level campaign tracking and rate limiting capabilities, perfect for businesses requiring detailed marketing attribution and robust traffic control while maintaining optimal user experience and powerful analytics insights.
+
 ## Dashboard Usage Guide
 
 ### **IP Management Workflow**
@@ -728,6 +1375,19 @@ This comprehensive settings system provides enterprise-level control over every 
 3. **Filter Data**: Use time range, country, and referrer filters
 4. **Analyze Patterns**: Review geographic distribution and referrer sources
 5. **Monitor Activity**: Watch live visitor feed for real-time insights
+
+### **Geographic & Time Controls Usage (Phase 2)**
+1. **Access Controls**: Click the blue globe icon on any domain to manage geographic and time controls
+2. **Geographic Controls Tab**: 
+   - Set allowed/blocked countries using country codes (US, CA, UK, etc.)
+   - Configure redirect rules for specific countries or regions
+   - Set default action for unmatched countries (allow/block)
+3. **Time Controls Tab**:
+   - Define business hours (start/end times with timezone)
+   - Set day-specific rules (weekday/weekend restrictions)
+   - Add holiday blocks with date ranges
+4. **Analytics Tab**: View geographic and time-based analytics
+5. **Access Test Tab**: Test visitor access with IP, country, and time simulation
 
 ### **Integration with NGINX**
 The IP rules and analytics integrate seamlessly with NGINX:
@@ -805,7 +1465,7 @@ domains/
 - **Performance**: Optimized for high-traffic scenarios with real-time capabilities
 - **Security**: Advanced security rules engine with honeypots and behavioral analysis
 - **Integrations**: Full webhook system, custom scripts, and API connections
-- **Last Updated**: October 5, 2025 - **🚀 MAJOR UPGRADE COMPLETE: Advanced Traffic Analytics & DNS Management Platform** - Full Enterprise Production Ready with 7-Tab Analytics System and Enterprise DNS Management
+- **Last Updated**: October 6, 2025 - **✅ PHASE 3 COMPLETE: Campaign Tracking & Rate Limiting** - Advanced UTM campaign tracking with real-time analytics, comprehensive rate limiting system with bot-specific controls, and integrated testing interface. Complete 4-tab dashboard with campaign performance analytics and rate limiting management.
 
 ## Implementation Benefits
 

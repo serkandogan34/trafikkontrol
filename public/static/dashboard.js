@@ -8,9 +8,10 @@ let currentSection = 'domains';
 
 // Check authentication on page load
 document.addEventListener('DOMContentLoaded', function() {
+    // If no token in localStorage, try using demo token for development
     if (!token) {
-        window.location.href = '/';
-        return;
+        console.log('No auth token found, using demo token for development');
+        token = 'demo';
     }
     
     // Initialize dashboard
@@ -188,11 +189,21 @@ function renderDomains(domains) {
             <div class="text-center py-8 text-gray-400">
                 <i class="fas fa-globe text-4xl mb-4"></i>
                 <p>Henüz domain eklenmemiş</p>
-                <button onclick="showAddDomain()" class="mt-4 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg">
+                <button id="firstDomainBtn" class="mt-4 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors">
                     <i class="fas fa-plus mr-2"></i>İlk domainı ekle
                 </button>
             </div>
         `;
+        
+        // Modern event listener ile buton bağla
+        setTimeout(() => {
+            const firstDomainBtn = document.getElementById('firstDomainBtn');
+            if (firstDomainBtn) {
+                firstDomainBtn.addEventListener('click', showAddDomain);
+                console.log('✅ First domain button event listener attached');
+            }
+        }, 10);
+        
         return;
     }
     
@@ -239,8 +250,8 @@ function renderDomains(domains) {
                             class="bg-indigo-600 hover:bg-indigo-700 px-3 py-1 rounded text-sm" title="Geographic & Time Controls">
                         <i class="fas fa-globe-americas"></i>
                     </button>
-                    <button onclick="showDomainCampaignAnalytics('${domain.id}')" 
-                            class="bg-purple-600 hover:bg-purple-700 px-3 py-1 rounded text-sm" title="Campaign Analytics & Rate Limiting">
+                    <button onclick="showDomainCampaignRateControls('${domain.id}')" 
+                            class="bg-orange-600 hover:bg-orange-700 px-3 py-1 rounded text-sm" title="Campaign Tracking & Rate Limiting">
                         <i class="fas fa-chart-line"></i>
                     </button>
                     <button onclick="showDomainVideoManagement('${domain.id}')" 
@@ -722,8 +733,8 @@ async function updateDomainConfig(domainId, field, value) {
     }
 }
 
-// Generate advanced NGINX config
-async function generateAdvancedNginxConfig() {
+// Generate advanced NGINX config via API (original implementation)
+async function generateAdvancedNginxConfigAPI() {
     try {
         showNotification('NGINX konfigürasyonu oluşturuluyor...', 'info');
         
@@ -786,8 +797,8 @@ function showNotification(message, type = 'info') {
     }, 3000);
 }
 
-// Download advanced NGINX config
-async function downloadAdvancedConfig() {
+// Download advanced NGINX config from API
+async function downloadAdvancedConfigFromAPI() {
     try {
         const response = await fetch('/api/nginx/download-config', {
             headers: { 'Authorization': 'Bearer ' + token }
@@ -813,8 +824,8 @@ async function downloadAdvancedConfig() {
     }
 }
 
-// Copy config to clipboard
-function copyConfigToClipboard() {
+// Copy config to clipboard (legacy version with length check)
+function copyConfigToClipboardLegacy() {
     const configText = document.getElementById('advanced-nginx-config-preview').textContent;
     if (configText && configText.length > 100) {
         navigator.clipboard.writeText(configText).then(() => {
@@ -1376,7 +1387,7 @@ function closeEditDomainModal() {
         document.body.removeChild(modal);
     }
 }
-function loadSettings() { showNotification('Ayarlar yükleniyor...', 'info'); }
+// loadSettings function implemented at end of file
 function refreshDomainConfigs() { loadNginxConfigs(); }
 
 // Generate advanced NGINX config
@@ -9532,3 +9543,3513 @@ document.addEventListener('DOMContentLoaded', function() {
     // Generate initial mock data
     generateMockDNSData();
 });
+
+// =============================================================================
+// IP MANAGEMENT & VISITOR ANALYTICS FUNCTIONS (PHASE 1)
+// =============================================================================
+
+// Show IP Management Modal for Domain
+async function showDomainIPManagement(domainId) {
+    try {
+        // Load domain IP rules
+        const response = await fetch(`/api/domains/${domainId}/ip-rules`, {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            console.log('API Response:', data);
+            // Ensure stats object exists with defaults
+            const stats = data.stats || {
+                whitelistCount: 0,
+                blacklistCount: 0,
+                graylistCount: 0,
+                rangeCount: { whitelist: 0, blacklist: 0, graylist: 0 }
+            };
+            
+            // Ensure ipRules object exists with defaults
+            const ipRules = data.ipRules || {
+                whitelist: [],
+                blacklist: [],
+                graylist: [],
+                ranges: { whitelist: [], blacklist: [], graylist: [] }
+            };
+            
+            createIPManagementModal(domainId, data.domain, ipRules, stats);
+        } else {
+            showNotification('IP kuralları yüklenirken hata: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('IP kuralları yüklenirken hata: ' + error.message, 'error');
+    }
+}
+
+// Create IP Management Modal
+function createIPManagementModal(domainId, domainName, ipRules, stats) {
+    const modalHTML = `
+        <div id="ipManagementModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-gray-800 p-6 rounded-lg w-full max-w-6xl max-h-[90vh] overflow-y-auto">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-2xl font-bold text-white flex items-center">
+                        <i class="fas fa-shield-alt mr-3 text-purple-400"></i>
+                        IP Management - ${domainName}
+                    </h3>
+                    <button onclick="closeIPManagementModal()" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times text-2xl"></i>
+                    </button>
+                </div>
+                
+                <!-- Stats Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    <div class="bg-green-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">${stats.whitelistCount}</div>
+                        <div class="text-sm text-green-200">Whitelist IPs</div>
+                    </div>
+                    <div class="bg-red-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">${stats.blacklistCount}</div>
+                        <div class="text-sm text-red-200">Blacklist IPs</div>
+                    </div>
+                    <div class="bg-yellow-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">${stats.graylistCount}</div>
+                        <div class="text-sm text-yellow-200">Graylist IPs</div>
+                    </div>
+                    <div class="bg-blue-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">${stats.rangeCount.whitelist + stats.rangeCount.blacklist + stats.rangeCount.graylist}</div>
+                        <div class="text-sm text-blue-200">CIDR Ranges</div>
+                    </div>
+                </div>
+                
+                <!-- Action Buttons -->
+                <div class="flex flex-wrap gap-3 mb-6">
+                    <button onclick="showAddIPModal('${domainId}')" 
+                            class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg font-medium">
+                        <i class="fas fa-plus mr-2"></i>Add IP
+                    </button>
+                    <button onclick="showBulkIPModal('${domainId}')" 
+                            class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">
+                        <i class="fas fa-upload mr-2"></i>Bulk Import
+                    </button>
+                    <button onclick="exportIPRules('${domainId}')" 
+                            class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg font-medium">
+                        <i class="fas fa-download mr-2"></i>Export
+                    </button>
+                    <button onclick="checkIPModal('${domainId}')" 
+                            class="bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded-lg font-medium">
+                        <i class="fas fa-search mr-2"></i>Check IP
+                    </button>
+                </div>
+                
+                <!-- IP Lists Tabs -->
+                <div class="mb-4">
+                    <div class="flex space-x-1 bg-gray-700 p-1 rounded-lg">
+                        <button onclick="showIPTab('whitelist')" id="ip-tab-whitelist" 
+                                class="ip-tab flex-1 px-4 py-2 rounded-lg font-medium transition-colors bg-green-600 text-white">
+                            <i class="fas fa-check mr-2"></i>Whitelist (${stats.whitelistCount})
+                        </button>
+                        <button onclick="showIPTab('blacklist')" id="ip-tab-blacklist" 
+                                class="ip-tab flex-1 px-4 py-2 rounded-lg font-medium transition-colors bg-gray-600 text-gray-300 hover:bg-red-600">
+                            <i class="fas fa-ban mr-2"></i>Blacklist (${stats.blacklistCount})
+                        </button>
+                        <button onclick="showIPTab('graylist')" id="ip-tab-graylist" 
+                                class="ip-tab flex-1 px-4 py-2 rounded-lg font-medium transition-colors bg-gray-600 text-gray-300 hover:bg-yellow-600">
+                            <i class="fas fa-eye mr-2"></i>Graylist (${stats.graylistCount})
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- IP Lists Content -->
+                <div id="ip-lists-container">
+                    <!-- Content will be populated by showIPTab -->
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    window.currentDomainId = domainId;
+    window.currentIPRules = ipRules;
+    
+    // Show whitelist by default
+    showIPTab('whitelist');
+}
+
+// Show IP Tab Content
+function showIPTab(tabType) {
+    // Update tab buttons
+    document.querySelectorAll('.ip-tab').forEach(tab => {
+        tab.classList.remove('bg-green-600', 'bg-red-600', 'bg-yellow-600', 'text-white');
+        tab.classList.add('bg-gray-600', 'text-gray-300');
+    });
+    
+    const activeTab = document.getElementById(`ip-tab-${tabType}`);
+    if (tabType === 'whitelist') {
+        activeTab.classList.add('bg-green-600', 'text-white');
+    } else if (tabType === 'blacklist') {
+        activeTab.classList.add('bg-red-600', 'text-white');
+    } else if (tabType === 'graylist') {
+        activeTab.classList.add('bg-yellow-600', 'text-white');
+    }
+    activeTab.classList.remove('bg-gray-600', 'text-gray-300');
+    
+    // Get IP list for this tab
+    const ipList = window.currentIPRules[tabType] || [];
+    const rangeList = window.currentIPRules.ranges[tabType] || [];
+    
+    const container = document.getElementById('ip-lists-container');
+    
+    container.innerHTML = `
+        <div class="bg-gray-700 rounded-lg overflow-hidden">
+            <div class="p-4 border-b border-gray-600">
+                <h4 class="font-semibold text-white capitalize">${tabType} Rules</h4>
+                <p class="text-sm text-gray-400">${ipList.length} IPs, ${rangeList.length} CIDR ranges</p>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-600">
+                        <tr>
+                            <th class="px-4 py-3 text-left">Type</th>
+                            <th class="px-4 py-3 text-left">IP / Range</th>
+                            <th class="px-4 py-3 text-left">Reason</th>
+                            <th class="px-4 py-3 text-left">Added</th>
+                            <th class="px-4 py-3 text-left">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-600">
+                        ${ipList.map(entry => `
+                            <tr class="hover:bg-gray-600">
+                                <td class="px-4 py-3">
+                                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-600 text-white">
+                                        IP
+                                    </span>
+                                </td>
+                                <td class="px-4 py-3 font-mono">${entry.ip}</td>
+                                <td class="px-4 py-3 text-gray-300">${entry.reason}</td>
+                                <td class="px-4 py-3 text-gray-400">${new Date(entry.addedAt).toLocaleString()}</td>
+                                <td class="px-4 py-3">
+                                    <button onclick="removeIPRule('${entry.ip}')" 
+                                            class="bg-red-600 hover:bg-red-700 px-2 py-1 rounded text-xs">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                        ${rangeList.map(entry => `
+                            <tr class="hover:bg-gray-600">
+                                <td class="px-4 py-3">
+                                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-600 text-white">
+                                        CIDR
+                                    </span>
+                                </td>
+                                <td class="px-4 py-3 font-mono">${entry.range}</td>
+                                <td class="px-4 py-3 text-gray-300">${entry.reason}</td>
+                                <td class="px-4 py-3 text-gray-400">${new Date(entry.addedAt).toLocaleString()}</td>
+                                <td class="px-4 py-3">
+                                    <button onclick="removeIPRule('${entry.range}')" 
+                                            class="bg-red-600 hover:bg-red-700 px-2 py-1 rounded text-xs">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                
+                ${(ipList.length === 0 && rangeList.length === 0) ? `
+                    <div class="text-center py-8 text-gray-400">
+                        <i class="fas fa-inbox text-4xl mb-4"></i>
+                        <p>No ${tabType} rules configured</p>
+                        <button onclick="showAddIPModal('${window.currentDomainId}', '${tabType}')" 
+                                class="mt-4 bg-${tabType === 'whitelist' ? 'green' : tabType === 'blacklist' ? 'red' : 'yellow'}-600 hover:bg-${tabType === 'whitelist' ? 'green' : tabType === 'blacklist' ? 'red' : 'yellow'}-700 px-4 py-2 rounded-lg">
+                            <i class="fas fa-plus mr-2"></i>Add first ${tabType} rule
+                        </button>
+                    </div>
+                ` : ''}
+            </div>
+        </div>
+    `;
+}
+
+// Show Add IP Modal
+function showAddIPModal(domainId, defaultType = 'blacklist') {
+    const modalHTML = `
+        <div id="addIPModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]">
+            <div class="bg-gray-800 p-6 rounded-lg w-full max-w-md">
+                <div class="flex justify-between items-center mb-4">
+                    <h4 class="text-lg font-bold text-white">Add IP Rule</h4>
+                    <button onclick="closeAddIPModal()" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <form id="addIPForm" onsubmit="handleAddIP(event, '${domainId}')">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Rule Type</label>
+                            <select id="ipRuleType" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white">
+                                <option value="whitelist" ${defaultType === 'whitelist' ? 'selected' : ''}>Whitelist (Always Allow)</option>
+                                <option value="blacklist" ${defaultType === 'blacklist' ? 'selected' : ''}>Blacklist (Always Block)</option>
+                                <option value="graylist" ${defaultType === 'graylist' ? 'selected' : ''}>Graylist (Monitor)</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">IP Address or CIDR Range</label>
+                            <input type="text" id="ipAddress" required
+                                   class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+                                   placeholder="192.168.1.1 or 192.168.0.0/24">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Reason</label>
+                            <textarea id="ipReason" rows="3"
+                                      class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+                                      placeholder="Reason for this rule..."></textarea>
+                        </div>
+                    </div>
+                    
+                    <div class="flex space-x-3 mt-6">
+                        <button type="submit" class="flex-1 bg-green-600 hover:bg-green-700 py-2 rounded-lg font-medium">
+                            <i class="fas fa-plus mr-2"></i>Add Rule
+                        </button>
+                        <button type="button" onclick="closeAddIPModal()" 
+                                class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded-lg font-medium">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+}
+
+// Handle Add IP Form Submit
+async function handleAddIP(event, domainId) {
+    event.preventDefault();
+    
+    console.log('handleAddIP called with domainId:', domainId);
+    
+    const type = document.getElementById('ipRuleType').value;
+    const ipAddress = document.getElementById('ipAddress').value.trim();
+    const reason = document.getElementById('ipReason').value.trim();
+    
+    console.log('Form values:', { type, ipAddress, reason });
+    
+    if (!ipAddress) {
+        console.log('IP address validation failed');
+        showNotification('IP address is required', 'error');
+        return;
+    }
+    
+    try {
+        const requestData = {
+            listType: type,  // API expects 'listType', not 'type'
+            ip: ipAddress,   // API expects 'ip' field
+            reason: reason || 'Manual addition'
+        };
+        
+        console.log('Request data:', requestData);
+        console.log('API URL:', `/api/domains/${domainId}/ip-rules`);
+        console.log('Token:', token);
+        
+        const response = await fetch(`/api/domains/${domainId}/ip-rules`, {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestData)
+        });
+        
+        console.log('Response status:', response.status);
+        const data = await response.json();
+        console.log('Response data:', data);
+        
+        if (data.success) {
+            showNotification('IP rule added successfully', 'success');
+            closeAddIPModal();
+            window.currentIPRules = data.ipRules;
+            showIPTab(type); // Refresh the current tab
+        } else {
+            console.log('API returned error:', data.message);
+            showNotification('Error adding IP rule: ' + data.message, 'error');
+        }
+    } catch (error) {
+        console.log('Exception in handleAddIP:', error);
+        showNotification('Error adding IP rule: ' + error.message, 'error');
+    }
+}
+
+// Remove IP Rule
+async function removeIPRule(ipAddress) {
+    if (!confirm(`Are you sure you want to remove ${ipAddress}?`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/domains/${window.currentDomainId}/ip-rules/${encodeURIComponent(ipAddress)}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('IP rule removed successfully', 'success');
+            window.currentIPRules = data.ipRules;
+            
+            // Refresh current tab
+            const activeTab = document.querySelector('.ip-tab.bg-green-600, .ip-tab.bg-red-600, .ip-tab.bg-yellow-600');
+            if (activeTab) {
+                const tabType = activeTab.id.split('-')[2];
+                showIPTab(tabType);
+            }
+        } else {
+            showNotification('Error removing IP rule: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Error removing IP rule: ' + error.message, 'error');
+    }
+}
+
+// Show Bulk IP Modal
+function showBulkIPModal(domainId) {
+    const modalHTML = `
+        <div id="bulkIPModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-60">
+            <div class="bg-gray-800 p-6 rounded-lg w-full max-w-2xl">
+                <div class="flex justify-between items-center mb-4">
+                    <h4 class="text-lg font-bold text-white">Bulk IP Operations</h4>
+                    <button onclick="closeBulkIPModal()" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <form id="bulkIPForm" onsubmit="handleBulkIP(event, '${domainId}')">
+                    <div class="space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-2">Operation</label>
+                                <select id="bulkOperation" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white">
+                                    <option value="add">Add IPs</option>
+                                    <option value="remove">Remove IPs</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-2">List Type</label>
+                                <select id="bulkType" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white">
+                                    <option value="blacklist">Blacklist</option>
+                                    <option value="whitelist">Whitelist</option>
+                                    <option value="graylist">Graylist</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                IP Addresses (one per line)
+                            </label>
+                            <textarea id="bulkIPs" rows="8" required
+                                      class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white font-mono text-sm"
+                                      placeholder="192.168.1.1&#10;10.0.0.0/8&#10;203.0.113.5&#10;..."></textarea>
+                            <p class="text-xs text-gray-400 mt-1">
+                                Supports both IP addresses and CIDR ranges
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div class="flex space-x-3 mt-6">
+                        <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded-lg font-medium">
+                            <i class="fas fa-upload mr-2"></i>Process IPs
+                        </button>
+                        <button type="button" onclick="closeBulkIPModal()" 
+                                class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded-lg font-medium">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+}
+
+// Handle Bulk IP Operations
+async function handleBulkIP(event, domainId) {
+    event.preventDefault();
+    
+    const operation = document.getElementById('bulkOperation').value;
+    const type = document.getElementById('bulkType').value;
+    const ipText = document.getElementById('bulkIPs').value.trim();
+    
+    if (!ipText) {
+        showNotification('Please enter IP addresses', 'error');
+        return;
+    }
+    
+    const lines = ipText.split('\n').map(line => line.trim()).filter(line => line);
+    const ips = lines.filter(line => !line.includes('/'));
+    const ranges = lines.filter(line => line.includes('/'));
+    
+    try {
+        const response = await fetch(`/api/domains/${domainId}/ip-rules/bulk`, {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                operation,
+                type,
+                ips: ips.length > 0 ? ips : undefined,
+                ranges: ranges.length > 0 ? ranges : undefined
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(data.message, 'success');
+            if (data.errors && data.errors.length > 0) {
+                console.log('Bulk operation errors:', data.errors);
+            }
+            closeBulkIPModal();
+            window.currentIPRules = data.ipRules;
+            
+            // Refresh current tab
+            const activeTab = document.querySelector('.ip-tab.bg-green-600, .ip-tab.bg-red-600, .ip-tab.bg-yellow-600');
+            if (activeTab) {
+                const tabType = activeTab.id.split('-')[2];
+                showIPTab(tabType);
+            }
+        } else {
+            showNotification('Error in bulk operation: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Error in bulk operation: ' + error.message, 'error');
+    }
+}
+
+// Check IP Modal
+function checkIPModal(domainId) {
+    const modalHTML = `
+        <div id="checkIPModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-60">
+            <div class="bg-gray-800 p-6 rounded-lg w-full max-w-md">
+                <div class="flex justify-between items-center mb-4">
+                    <h4 class="text-lg font-bold text-white">Check IP Status</h4>
+                    <button onclick="closeCheckIPModal()" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                
+                <form id="checkIPForm" onsubmit="handleCheckIP(event, '${domainId}')">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">IP Address</label>
+                            <input type="text" id="checkIPAddress" required
+                                   class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+                                   placeholder="192.168.1.1">
+                        </div>
+                        
+                        <div id="ipCheckResult" class="hidden">
+                            <!-- Results will be shown here -->
+                        </div>
+                    </div>
+                    
+                    <div class="flex space-x-3 mt-6">
+                        <button type="submit" class="flex-1 bg-orange-600 hover:bg-orange-700 py-2 rounded-lg font-medium">
+                            <i class="fas fa-search mr-2"></i>Check IP
+                        </button>
+                        <button type="button" onclick="closeCheckIPModal()" 
+                                class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded-lg font-medium">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+}
+
+// Handle Check IP
+async function handleCheckIP(event, domainId) {
+    event.preventDefault();
+    
+    const ipAddress = document.getElementById('checkIPAddress').value.trim();
+    
+    if (!ipAddress) {
+        showNotification('IP address is required', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/domains/${domainId}/ip-check/${encodeURIComponent(ipAddress)}`, {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            const resultDiv = document.getElementById('ipCheckResult');
+            resultDiv.classList.remove('hidden');
+            
+            let statusColor = 'text-gray-400';
+            let statusIcon = 'fas fa-question';
+            
+            if (data.status === 'whitelisted') {
+                statusColor = 'text-green-400';
+                statusIcon = 'fas fa-check';
+            } else if (data.status === 'blacklisted') {
+                statusColor = 'text-red-400';
+                statusIcon = 'fas fa-ban';
+            } else if (data.status === 'graylisted') {
+                statusColor = 'text-yellow-400';
+                statusIcon = 'fas fa-eye';
+            }
+            
+            resultDiv.innerHTML = `
+                <div class="bg-gray-700 p-4 rounded-lg">
+                    <div class="flex items-center space-x-3 mb-3">
+                        <i class="${statusIcon} ${statusColor}"></i>
+                        <span class="font-medium ${statusColor}">${data.status.toUpperCase()}</span>
+                        <span class="text-sm text-gray-400">Risk: ${data.riskScore}/100</span>
+                    </div>
+                    
+                    ${data.inList ? `
+                        <div class="text-sm text-gray-300 mb-2">
+                            <strong>Reason:</strong> ${data.reason}
+                        </div>
+                        <div class="text-sm text-gray-400 mb-3">
+                            <strong>Added:</strong> ${new Date(data.addedAt).toLocaleString()}
+                        </div>
+                    ` : ''}
+                    
+                    <div class="text-sm">
+                        <div class="text-gray-300 font-medium mb-2">Recommendations:</div>
+                        <ul class="space-y-1">
+                            ${data.recommendations.map(rec => `
+                                <li class="text-gray-400 text-xs">• ${rec}</li>
+                            `).join('')}
+                        </ul>
+                    </div>
+                </div>
+            `;
+        } else {
+            showNotification('Error checking IP: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Error checking IP: ' + error.message, 'error');
+    }
+}
+
+// Export IP Rules
+async function exportIPRules(domainId) {
+    try {
+        const response = await fetch(`/api/domains/${domainId}/ip-rules`, {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            const exportData = {
+                domain: data.domain,
+                timestamp: new Date().toISOString(),
+                ipRules: data.ipRules,
+                stats: data.stats
+            };
+            
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ip-rules-${data.domain}-${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            showNotification('IP rules exported successfully', 'success');
+        } else {
+            showNotification('Error exporting IP rules: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Error exporting IP rules: ' + error.message, 'error');
+    }
+}
+
+// Close Modal Functions
+function closeIPManagementModal() {
+    const modal = document.getElementById('ipManagementModal');
+    if (modal) modal.remove();
+}
+
+function closeAddIPModal() {
+    const modal = document.getElementById('addIPModal');
+    if (modal) modal.remove();
+}
+
+function closeBulkIPModal() {
+    const modal = document.getElementById('bulkIPModal');
+    if (modal) modal.remove();
+}
+
+function closeCheckIPModal() {
+    const modal = document.getElementById('checkIPModal');
+    if (modal) modal.remove();
+}
+
+// =============================================================================
+// GLOBAL IP POOL MANAGEMENT DASHBOARD FUNCTIONS
+// =============================================================================
+
+// Show Global IP Pool Management Dashboard
+async function showIPPoolDashboard() {
+    try {
+        // Load IP pool data
+        const poolResponse = await fetch('/api/ip/pool', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const analyticsResponse = await fetch('/api/ip/analytics', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const poolData = await poolResponse.json();
+        const analyticsData = await analyticsResponse.json();
+        
+        if (poolData.success && analyticsData.success) {
+            createIPPoolModal(poolData, analyticsData);
+        } else {
+            showNotification('IP Pool verisi yüklenirken hata oluştu', 'error');
+        }
+    } catch (error) {
+        showNotification('IP Pool dashboard hatası: ' + error.message, 'error');
+    }
+}
+
+// Create IP Pool Management Modal
+function createIPPoolModal(poolData, analyticsData) {
+    const { analytics, needsAnalysis } = poolData;
+    const { topVisitors } = analyticsData;
+    
+    const modalHTML = `
+        <div id="ipPoolModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-gray-800 p-6 rounded-lg w-full max-w-7xl max-h-[95vh] overflow-y-auto">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-3xl font-bold text-white flex items-center">
+                        <i class="fas fa-globe-americas mr-3 text-blue-400"></i>
+                        Global IP Pool Management
+                        <span class="ml-4 text-sm bg-blue-600 px-3 py-1 rounded-full">${analytics.totalIPs} IPs tracked</span>
+                    </h3>
+                    <button onclick="closeIPPoolModal()" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times text-2xl"></i>
+                    </button>
+                </div>
+                
+                <!-- Analytics Overview -->
+                <div class="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
+                    <div class="bg-blue-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">${analytics.totalIPs}</div>
+                        <div class="text-sm text-blue-200">Total IPs</div>
+                    </div>
+                    <div class="bg-green-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">${analytics.riskDistribution.low || 0}</div>
+                        <div class="text-sm text-green-200">Low Risk</div>
+                    </div>
+                    <div class="bg-yellow-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">${analytics.riskDistribution.medium || 0}</div>
+                        <div class="text-sm text-yellow-200">Medium Risk</div>
+                    </div>
+                    <div class="bg-red-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">${analytics.riskDistribution.high || 0}</div>
+                        <div class="text-sm text-red-200">High Risk</div>
+                    </div>
+                    <div class="bg-purple-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">${analytics.riskDistribution.critical || 0}</div>
+                        <div class="text-sm text-purple-200">Critical</div>
+                    </div>
+                    <div class="bg-gray-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">${analytics.manualActions.total || 0}</div>
+                        <div class="text-sm text-gray-200">Manual Actions</div>
+                    </div>
+                </div>
+                
+                <!-- Tab Navigation -->
+                <div class="flex space-x-2 mb-6 border-b border-gray-600">
+                    <button id="ippool-tab-analytics" onclick="showIPPoolTab('analytics')" 
+                            class="ippool-tab bg-blue-600 px-4 py-2 rounded-t-lg text-white font-medium">
+                        <i class="fas fa-chart-bar mr-2"></i>Analytics
+                    </button>
+                    <button id="ippool-tab-analysis" onclick="showIPPoolTab('analysis')" 
+                            class="ippool-tab bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-t-lg text-white font-medium">
+                        <i class="fas fa-exclamation-triangle mr-2"></i>Needs Analysis (${needsAnalysis.length})
+                    </button>
+                    <button id="ippool-tab-control" onclick="showIPPoolTab('control')" 
+                            class="ippool-tab bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-t-lg text-white font-medium">
+                        <i class="fas fa-cogs mr-2"></i>Manual Control
+                    </button>
+                    <button id="ippool-tab-settings" onclick="showIPPoolTab('settings')" 
+                            class="ippool-tab bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-t-lg text-white font-medium">
+                        <i class="fas fa-sliders-h mr-2"></i>Risk Settings
+                    </button>
+                    <button id="ippool-tab-visitors" onclick="showIPPoolTab('visitors')" 
+                            class="ippool-tab bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-t-lg text-white font-medium">
+                        <i class="fas fa-users mr-2"></i>Top Visitors
+                    </button>
+                </div>
+                
+                <!-- Tab Content -->
+                <div id="ippool-content-analytics" class="ippool-content">
+                    ${generateIPPoolAnalyticsContent(analytics)}
+                </div>
+                
+                <div id="ippool-content-analysis" class="ippool-content hidden">
+                    ${generateNeedsAnalysisContent(needsAnalysis)}
+                </div>
+                
+                <div id="ippool-content-control" class="ippool-content hidden">
+                    ${generateManualControlContent()}
+                </div>
+                
+                <div id="ippool-content-settings" class="ippool-content hidden">
+                    ${generateRiskSettingsContent()}
+                </div>
+                
+                <div id="ippool-content-visitors" class="ippool-content hidden">
+                    ${generateTopVisitorsContent(topVisitors)}
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+}
+
+// Generate IP Pool Analytics Content
+function generateIPPoolAnalyticsContent(analytics) {
+    return `
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Classification Distribution -->
+            <div class="bg-gray-700 p-4 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-pie-chart mr-2 text-blue-400"></i>Classification Distribution
+                </h4>
+                <div class="space-y-3">
+                    ${Object.entries(analytics.classifications).map(([type, count]) => `
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-300 capitalize">${type.replace('_', ' ')}</span>
+                            <span class="text-white font-bold">${count}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+            
+            <!-- Risk Distribution -->
+            <div class="bg-gray-700 p-4 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-shield-alt mr-2 text-red-400"></i>Risk Distribution
+                </h4>
+                <div class="space-y-3">
+                    ${Object.entries(analytics.riskDistribution).map(([risk, count]) => `
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-300 capitalize">${risk}</span>
+                            <span class="text-white font-bold">${count}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+            
+            <!-- Manual Actions -->
+            <div class="bg-gray-700 p-4 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-hand-paper mr-2 text-yellow-400"></i>Manual Actions Summary
+                </h4>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Whitelisted</span>
+                        <span class="text-green-400 font-bold">${analytics.manualActions.whitelisted || 0}</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Blacklisted</span>
+                        <span class="text-red-400 font-bold">${analytics.manualActions.blacklisted || 0}</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Total Manual</span>
+                        <span class="text-white font-bold">${analytics.manualActions.total || 0}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- System Stats -->
+            <div class="bg-gray-700 p-4 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-info-circle mr-2 text-blue-400"></i>System Statistics
+                </h4>
+                <div class="space-y-3">
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Total Visits</span>
+                        <span class="text-white font-bold">${analytics.totalVisits || 0}</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Unique IPs</span>
+                        <span class="text-white font-bold">${analytics.totalIPs}</span>
+                    </div>
+                    <div class="flex justify-between items-center">
+                        <span class="text-gray-300">Avg Visits/IP</span>
+                        <span class="text-white font-bold">${analytics.totalIPs > 0 ? (analytics.totalVisits / analytics.totalIPs).toFixed(1) : '0'}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Generate Needs Analysis Content
+function generateNeedsAnalysisContent(needsAnalysis) {
+    if (needsAnalysis.length === 0) {
+        return `
+            <div class="text-center py-12">
+                <i class="fas fa-check-circle text-6xl text-green-400 mb-4"></i>
+                <h4 class="text-xl font-bold text-white mb-2">All Clear!</h4>
+                <p class="text-gray-400">No IPs currently need manual analysis.</p>
+            </div>
+        `;
+    }
+    
+    return `
+        <div class="bg-yellow-900 border border-yellow-600 rounded-lg p-4 mb-6">
+            <div class="flex items-center">
+                <i class="fas fa-exclamation-triangle text-yellow-400 text-xl mr-3"></i>
+                <div>
+                    <h4 class="text-white font-bold">Analysis Required</h4>
+                    <p class="text-yellow-200 text-sm">${needsAnalysis.length} IP(s) need manual review due to suspicious activity patterns.</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="space-y-4">
+            ${needsAnalysis.map(ip => `
+                <div class="bg-gray-700 border border-yellow-600 rounded-lg p-4">
+                    <div class="flex justify-between items-start">
+                        <div class="flex-1">
+                            <div class="flex items-center space-x-3 mb-2">
+                                <span class="text-xl font-mono text-white">${ip.ip}</span>
+                                <span class="px-2 py-1 bg-${getRiskColor(ip.riskLevel)}-600 rounded text-white text-xs">${ip.classification}</span>
+                                <span class="px-2 py-1 bg-gray-600 rounded text-white text-xs">${ip.riskLevel} risk</span>
+                            </div>
+                            
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                <div>
+                                    <span class="text-gray-400">Total Visits:</span>
+                                    <span class="text-white font-bold ml-1">${ip.totalVisits}</span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-400">Last Hour:</span>
+                                    <span class="text-white font-bold ml-1">${ip.recentActivity?.lastHour || 0}</span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-400">Last Seen:</span>
+                                    <span class="text-white font-bold ml-1">${new Date(ip.lastSeen).toLocaleTimeString()}</span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-400">First Seen:</span>
+                                    <span class="text-white font-bold ml-1">${new Date(ip.firstSeen).toLocaleTimeString()}</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="flex space-x-2 ml-4">
+                            <button onclick="manualIPControl('${ip.ip}', 'whitelist')" 
+                                    class="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-white text-sm">
+                                <i class="fas fa-check mr-1"></i>Whitelist
+                            </button>
+                            <button onclick="manualIPControl('${ip.ip}', 'blacklist')" 
+                                    class="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-white text-sm">
+                                <i class="fas fa-ban mr-1"></i>Blacklist
+                            </button>
+                            <button onclick="showIPDetails('${ip.ip}')" 
+                                    class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-white text-sm">
+                                <i class="fas fa-info mr-1"></i>Details
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+// Generate Risk Settings Content  
+function generateRiskSettingsContent() {
+    return `
+        <div class="bg-yellow-900 border border-yellow-600 rounded-lg p-4 mb-6">
+            <div class="flex items-center">
+                <i class="fas fa-exclamation-triangle text-yellow-400 text-xl mr-3"></i>
+                <div>
+                    <h4 class="text-white font-bold">Risk Assessment Configuration</h4>
+                    <p class="text-yellow-200 text-sm">Configure automatic IP classification thresholds. Changes apply to all future and existing IPs.</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <!-- Current Configuration -->
+            <div class="bg-gray-700 p-6 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-cogs mr-2 text-blue-400"></i>Current Configuration
+                </h4>
+                
+                <div id="currentRiskConfig" class="space-y-4">
+                    <div class="text-center text-gray-400">
+                        <i class="fas fa-spinner fa-spin text-2xl"></i>
+                        <p class="mt-2">Loading configuration...</p>
+                    </div>
+                </div>
+                
+                <div class="flex space-x-3 mt-6">
+                    <button onclick="loadRiskConfiguration()" 
+                            class="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded-lg font-medium">
+                        <i class="fas fa-sync mr-2"></i>Refresh
+                    </button>
+                    <button onclick="resetRiskConfiguration()" 
+                            class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded-lg font-medium">
+                        <i class="fas fa-undo mr-2"></i>Reset to Defaults
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Configuration Form -->
+            <div class="bg-gray-700 p-6 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-edit mr-2 text-green-400"></i>Update Thresholds
+                </h4>
+                
+                <form id="riskConfigForm" onsubmit="updateRiskConfiguration(event)">
+                    <div class="space-y-4">
+                        <!-- Visit Count Thresholds -->
+                        <div class="bg-gray-800 p-4 rounded-lg">
+                            <h5 class="text-white font-bold mb-3">Visit Count Thresholds</h5>
+                            
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm text-gray-300 mb-1">Normal (Low Risk)</label>
+                                    <div class="flex space-x-2">
+                                        <input type="number" id="normal-min" min="1" max="100" 
+                                               class="flex-1 px-3 py-2 bg-gray-600 border border-gray-500 rounded text-white text-sm"
+                                               placeholder="Min">
+                                        <input type="number" id="normal-max" min="1" max="100"
+                                               class="flex-1 px-3 py-2 bg-gray-600 border border-gray-500 rounded text-white text-sm"
+                                               placeholder="Max">
+                                    </div>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm text-gray-300 mb-1">Frequent (Medium Risk)</label>
+                                    <div class="flex space-x-2">
+                                        <input type="number" id="frequent-min" min="1" max="100"
+                                               class="flex-1 px-3 py-2 bg-gray-600 border border-gray-500 rounded text-white text-sm"
+                                               placeholder="Min">
+                                        <input type="number" id="frequent-max" min="1" max="100"
+                                               class="flex-1 px-3 py-2 bg-gray-600 border border-gray-500 rounded text-white text-sm"
+                                               placeholder="Max">
+                                    </div>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm text-gray-300 mb-1">Suspicious (High Risk)</label>
+                                    <div class="flex space-x-2">
+                                        <input type="number" id="suspicious-min" min="1" max="100"
+                                               class="flex-1 px-3 py-2 bg-gray-600 border border-gray-500 rounded text-white text-sm"
+                                               placeholder="Min">
+                                        <input type="number" id="suspicious-max" min="1" max="100"
+                                               class="flex-1 px-3 py-2 bg-gray-600 border border-gray-500 rounded text-white text-sm"
+                                               placeholder="Max">
+                                    </div>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm text-gray-300 mb-1">High Risk (Critical)</label>
+                                    <div class="flex space-x-2">
+                                        <input type="number" id="highRisk-min" min="1" max="100"
+                                               class="flex-1 px-3 py-2 bg-gray-600 border border-gray-500 rounded text-white text-sm"
+                                               placeholder="Min">
+                                        <input type="number" id="highRisk-max" min="1" max="1000"
+                                               class="flex-1 px-3 py-2 bg-gray-600 border border-gray-500 rounded text-white text-sm"
+                                               placeholder="Max">
+                                    </div>
+                                </div>
+                                
+                                <div class="col-span-2">
+                                    <label class="block text-sm text-gray-300 mb-1">Analysis Required (Critical)</label>
+                                    <input type="number" id="analysisRequired-min" min="1" max="1000"
+                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded text-white text-sm"
+                                           placeholder="Minimum visits for mandatory analysis">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Bot Detection Settings -->
+                        <div class="bg-gray-800 p-4 rounded-lg">
+                            <h5 class="text-white font-bold mb-3">Bot Detection Settings</h5>
+                            
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm text-gray-300 mb-1">Bot Visit Threshold</label>
+                                    <input type="number" id="botDetection-visits" min="1" max="1000"
+                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded text-white text-sm"
+                                           placeholder="Visits within time window">
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm text-gray-300 mb-1">Time Window (minutes)</label>
+                                    <input type="number" id="botDetection-timeWindow" min="1" max="1440"
+                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded text-white text-sm"
+                                           placeholder="Time window in minutes">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-800 p-3 rounded-lg">
+                            <p class="text-sm text-gray-300">
+                                <i class="fas fa-info-circle mr-2 text-blue-400"></i>
+                                <strong>Note:</strong> Changes will be applied to all existing IPs immediately. 
+                                Manual classifications will not be affected.
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div class="flex space-x-3 mt-6">
+                        <button type="button" onclick="previewRiskConfiguration()" 
+                                class="flex-1 bg-orange-600 hover:bg-orange-700 py-3 rounded-lg font-medium">
+                            <i class="fas fa-eye mr-2"></i>Preview Changes
+                        </button>
+                        <button type="submit" 
+                                class="flex-1 bg-green-600 hover:bg-green-700 py-3 rounded-lg font-medium">
+                            <i class="fas fa-save mr-2"></i>Save Configuration
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- Preview Results -->
+        <div id="configPreviewResults" class="mt-6 hidden">
+            <!-- Preview results will be shown here -->
+        </div>
+    `;
+}
+
+// Generate Manual Control Content
+function generateManualControlContent() {
+    return `
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Manual IP Control -->
+            <div class="bg-gray-700 p-6 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-cogs mr-2 text-blue-400"></i>Manual IP Control
+                </h4>
+                
+                <form id="manualIPForm" onsubmit="handleManualIPControl(event)">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">IP Address</label>
+                            <input type="text" id="manualIP" required
+                                   class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
+                                   placeholder="192.168.1.100">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Action</label>
+                            <select id="manualAction" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
+                                <option value="whitelist">Whitelist (Always Allow)</option>
+                                <option value="blacklist">Blacklist (Always Block)</option>
+                                <option value="reset">Reset to Auto-Classification</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Reason</label>
+                            <textarea id="manualReason" 
+                                      class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
+                                      rows="3" placeholder="Reason for this action..."></textarea>
+                        </div>
+                        
+                        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded-lg font-medium">
+                            <i class="fas fa-check mr-2"></i>Apply Action
+                        </button>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- IP Search & Details -->
+            <div class="bg-gray-700 p-6 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-search mr-2 text-green-400"></i>IP Search & Details
+                </h4>
+                
+                <form id="ipSearchForm" onsubmit="handleIPSearch(event)">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Search IP</label>
+                            <input type="text" id="searchIP" required
+                                   class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
+                                   placeholder="Enter IP to search...">
+                        </div>
+                        
+                        <button type="submit" class="w-full bg-green-600 hover:bg-green-700 py-2 rounded-lg font-medium">
+                            <i class="fas fa-search mr-2"></i>Search IP
+                        </button>
+                    </div>
+                </form>
+                
+                <div id="ipSearchResults" class="mt-6">
+                    <!-- Search results will appear here -->
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Generate Top Visitors Content
+function generateTopVisitorsContent(topVisitors) {
+    if (topVisitors.length === 0) {
+        return `
+            <div class="text-center py-12">
+                <i class="fas fa-users text-6xl text-gray-400 mb-4"></i>
+                <h4 class="text-xl font-bold text-white mb-2">No Visitors Yet</h4>
+                <p class="text-gray-400">No visitors have been tracked in the IP pool.</p>
+            </div>
+        `;
+    }
+    
+    return `
+        <div class="bg-gray-700 rounded-lg overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="min-w-full">
+                    <thead class="bg-gray-800">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">IP Address</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Visits</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Classification</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Risk</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Last Seen</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-600">
+                        ${topVisitors.map(visitor => `
+                            <tr>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="text-white font-mono">${visitor.ip}</span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="text-white font-bold">${visitor.totalVisits}</span>
+                                    ${visitor.recentActivity?.lastHour > 0 ? 
+                                        `<span class="ml-2 px-2 py-1 bg-orange-600 rounded text-xs text-white">${visitor.recentActivity.lastHour}/hr</span>` : ''}
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="px-2 py-1 bg-${getClassificationColor(visitor.classification)}-600 rounded text-white text-xs">
+                                        ${visitor.classification}
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="px-2 py-1 bg-${getRiskColor(visitor.riskLevel)}-600 rounded text-white text-xs">
+                                        ${visitor.riskLevel}
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    ${visitor.manualStatus ? 
+                                        `<span class="px-2 py-1 bg-purple-600 rounded text-white text-xs">${visitor.manualStatus}</span>` :
+                                        '<span class="text-gray-400 text-xs">Auto</span>'}
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-gray-300 text-sm">
+                                    ${new Date(visitor.lastSeen).toLocaleString()}
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                    <div class="flex space-x-2">
+                                        <button onclick="showIPDetails('${visitor.ip}')" 
+                                                class="text-blue-400 hover:text-blue-300">
+                                            <i class="fas fa-info-circle"></i>
+                                        </button>
+                                        <button onclick="manualIPControl('${visitor.ip}', 'whitelist')" 
+                                                class="text-green-400 hover:text-green-300">
+                                            <i class="fas fa-check"></i>
+                                        </button>
+                                        <button onclick="manualIPControl('${visitor.ip}', 'blacklist')" 
+                                                class="text-red-400 hover:text-red-300">
+                                            <i class="fas fa-ban"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+// Helper functions for color coding
+function getRiskColor(risk) {
+    switch (risk) {
+        case 'low': return 'green';
+        case 'medium': return 'yellow';
+        case 'high': return 'orange';
+        case 'critical': return 'red';
+        case 'safe': return 'blue';
+        default: return 'gray';
+    }
+}
+
+function getClassificationColor(classification) {
+    switch (classification) {
+        case 'new': return 'blue';
+        case 'normal': return 'green';
+        case 'frequent': return 'yellow';
+        case 'suspicious': return 'orange';
+        case 'high_risk': case 'analysis_required': return 'red';
+        case 'blocked': return 'red';
+        case 'whitelisted': return 'green';
+        default: return 'gray';
+    }
+}
+
+
+
+// Manual IP Control
+async function handleManualIPControl(event) {
+    event.preventDefault();
+    
+    const ip = document.getElementById('manualIP').value.trim();
+    const action = document.getElementById('manualAction').value;
+    const reason = document.getElementById('manualReason').value.trim();
+    
+    if (!ip) {
+        showNotification('IP address is required', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/ip/control', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ip, action, reason })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(data.message, 'success');
+            
+            // Clear form
+            document.getElementById('manualIP').value = '';
+            document.getElementById('manualReason').value = '';
+            
+            // Refresh dashboard
+            setTimeout(() => {
+                closeIPPoolModal();
+                showIPPoolDashboard();
+            }, 1500);
+        } else {
+            showNotification('Error: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
+
+// Quick manual control from buttons
+async function manualIPControl(ip, action) {
+    const reason = prompt(`Enter reason for ${action}ing IP ${ip}:`);
+    if (!reason) return;
+    
+    try {
+        const response = await fetch('/api/ip/control', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ip, action, reason })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(data.message, 'success');
+            
+            // Refresh dashboard
+            setTimeout(() => {
+                closeIPPoolModal();
+                showIPPoolDashboard();
+            }, 1500);
+        } else {
+            showNotification('Error: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
+
+// IP Search
+async function handleIPSearch(event) {
+    event.preventDefault();
+    
+    const ip = document.getElementById('searchIP').value.trim();
+    
+    if (!ip) {
+        showNotification('IP address is required', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/ip/details/${encodeURIComponent(ip)}`, {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            displayIPSearchResults(data);
+        } else {
+            document.getElementById('ipSearchResults').innerHTML = `
+                <div class="bg-red-900 border border-red-600 rounded-lg p-4 text-center">
+                    <i class="fas fa-exclamation-circle text-red-400 text-2xl mb-2"></i>
+                    <p class="text-white">${data.message}</p>
+                </div>
+            `;
+        }
+    } catch (error) {
+        showNotification('Error searching IP: ' + error.message, 'error');
+    }
+}
+
+// Display IP search results
+function displayIPSearchResults(data) {
+    const resultsHTML = `
+        <div class="bg-gray-800 border border-gray-600 rounded-lg p-4">
+            <div class="flex justify-between items-center mb-4">
+                <h5 class="text-lg font-bold text-white">${data.ip}</h5>
+                <div class="flex space-x-2">
+                    <span class="px-2 py-1 bg-${getClassificationColor(data.classification)}-600 rounded text-white text-xs">
+                        ${data.classification}
+                    </span>
+                    <span class="px-2 py-1 bg-${getRiskColor(data.riskLevel)}-600 rounded text-white text-xs">
+                        ${data.riskLevel}
+                    </span>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4 text-sm mb-4">
+                <div>
+                    <span class="text-gray-400">Total Visits:</span>
+                    <span class="text-white font-bold ml-1">${data.totalVisits}</span>
+                </div>
+                <div>
+                    <span class="text-gray-400">Last Hour:</span>
+                    <span class="text-white font-bold ml-1">${data.recentActivity?.lastHour || 0}</span>
+                </div>
+                <div>
+                    <span class="text-gray-400">First Seen:</span>
+                    <span class="text-white font-bold ml-1">${new Date(data.firstSeen).toLocaleString()}</span>
+                </div>
+                <div>
+                    <span class="text-gray-400">Last Seen:</span>
+                    <span class="text-white font-bold ml-1">${new Date(data.lastSeen).toLocaleString()}</span>
+                </div>
+            </div>
+            
+            ${data.manualStatus ? `
+                <div class="bg-purple-900 border border-purple-600 rounded p-3 mb-4">
+                    <div class="text-purple-200 text-sm">
+                        <strong>Manual Status:</strong> ${data.manualStatus}<br>
+                        <strong>Reason:</strong> ${data.manualReason}<br>
+                        <strong>By:</strong> ${data.manualBy} at ${new Date(data.manualAt).toLocaleString()}
+                    </div>
+                </div>
+            ` : ''}
+            
+            <div class="flex space-x-2">
+                <button onclick="manualIPControl('${data.ip}', 'whitelist')" 
+                        class="flex-1 bg-green-600 hover:bg-green-700 py-2 rounded text-white">
+                    <i class="fas fa-check mr-2"></i>Whitelist
+                </button>
+                <button onclick="manualIPControl('${data.ip}', 'blacklist')" 
+                        class="flex-1 bg-red-600 hover:bg-red-700 py-2 rounded text-white">
+                    <i class="fas fa-ban mr-2"></i>Blacklist
+                </button>
+                <button onclick="manualIPControl('${data.ip}', 'reset')" 
+                        class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded text-white">
+                    <i class="fas fa-redo mr-2"></i>Reset
+                </button>
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('ipSearchResults').innerHTML = resultsHTML;
+}
+
+// Show detailed IP information
+async function showIPDetails(ip) {
+    try {
+        const response = await fetch(`/api/ip/details/${encodeURIComponent(ip)}`, {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            createIPDetailsModal(data);
+        } else {
+            showNotification('Error loading IP details: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Error loading IP details: ' + error.message, 'error');
+    }
+}
+
+// Create IP Details Modal
+function createIPDetailsModal(data) {
+    const modalHTML = `
+        <div id="ipDetailsModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]">
+            <div class="bg-gray-800 p-6 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-2xl font-bold text-white flex items-center">
+                        <i class="fas fa-info-circle mr-3 text-blue-400"></i>
+                        IP Details: ${data.ip}
+                    </h3>
+                    <button onclick="closeIPDetailsModal()" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times text-2xl"></i>
+                    </button>
+                </div>
+                
+                <!-- IP Overview -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div class="bg-gray-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">${data.totalVisits}</div>
+                        <div class="text-sm text-gray-300">Total Visits</div>
+                    </div>
+                    <div class="bg-gray-700 p-4 rounded-lg text-center">
+                        <div class="text-lg font-bold text-${getClassificationColor(data.classification)}-400">${data.classification}</div>
+                        <div class="text-sm text-gray-300">Classification</div>
+                    </div>
+                    <div class="bg-gray-700 p-4 rounded-lg text-center">
+                        <div class="text-lg font-bold text-${getRiskColor(data.riskLevel)}-400">${data.riskLevel}</div>
+                        <div class="text-sm text-gray-300">Risk Level</div>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- Recent Activity -->
+                    <div class="bg-gray-700 p-4 rounded-lg">
+                        <h4 class="text-lg font-bold text-white mb-4">Recent Activity</h4>
+                        <div class="space-y-2">
+                            <div class="flex justify-between">
+                                <span class="text-gray-300">Last Hour:</span>
+                                <span class="text-white font-bold">${data.recentActivity?.lastHour || 0}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-300">Last 6 Hours:</span>
+                                <span class="text-white font-bold">${data.recentActivity?.last6Hours || 0}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-300">Last 24 Hours:</span>
+                                <span class="text-white font-bold">${data.recentActivity?.last24Hours || 0}</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Endpoints -->
+                    <div class="bg-gray-700 p-4 rounded-lg">
+                        <h4 class="text-lg font-bold text-white mb-4">Top Endpoints</h4>
+                        <div class="space-y-2">
+                            ${Object.entries(data.endpoints || {}).slice(0, 5).map(([endpoint, count]) => `
+                                <div class="flex justify-between">
+                                    <span class="text-gray-300 truncate">${endpoint}</span>
+                                    <span class="text-white font-bold">${count}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    
+                    <!-- Visit History -->
+                    <div class="bg-gray-700 p-4 rounded-lg">
+                        <h4 class="text-lg font-bold text-white mb-4">Recent Visits</h4>
+                        <div class="space-y-2 max-h-48 overflow-y-auto">
+                            ${(data.visitHistory || []).map(visit => `
+                                <div class="text-sm">
+                                    <div class="text-white">${visit.endpoint}</div>
+                                    <div class="text-gray-400">${new Date(visit.timestamp).toLocaleString()}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    
+                    <!-- Classification History -->
+                    <div class="bg-gray-700 p-4 rounded-lg">
+                        <h4 class="text-lg font-bold text-white mb-4">Classification History</h4>
+                        <div class="space-y-2 max-h-48 overflow-y-auto">
+                            ${(data.classificationHistory || []).map(history => `
+                                <div class="text-sm">
+                                    <div class="text-white">${history.classification} (${history.riskLevel})</div>
+                                    <div class="text-gray-400">${history.reason}</div>
+                                    <div class="text-gray-500">${new Date(history.timestamp).toLocaleString()}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+                
+                ${data.manualStatus ? `
+                    <div class="mt-6 bg-purple-900 border border-purple-600 rounded-lg p-4">
+                        <h4 class="text-white font-bold mb-2">Manual Status</h4>
+                        <div class="text-purple-200">
+                            <p><strong>Status:</strong> ${data.manualStatus}</p>
+                            <p><strong>Reason:</strong> ${data.manualReason}</p>
+                            <p><strong>Set by:</strong> ${data.manualBy} at ${new Date(data.manualAt).toLocaleString()}</p>
+                        </div>
+                    </div>
+                ` : ''}
+                
+                <!-- Actions -->
+                <div class="flex space-x-3 mt-6">
+                    <button onclick="manualIPControl('${data.ip}', 'whitelist')" 
+                            class="flex-1 bg-green-600 hover:bg-green-700 py-3 rounded-lg font-medium">
+                        <i class="fas fa-check mr-2"></i>Whitelist
+                    </button>
+                    <button onclick="manualIPControl('${data.ip}', 'blacklist')" 
+                            class="flex-1 bg-red-600 hover:bg-red-700 py-3 rounded-lg font-medium">
+                        <i class="fas fa-ban mr-2"></i>Blacklist
+                    </button>
+                    <button onclick="manualIPControl('${data.ip}', 'reset')" 
+                            class="flex-1 bg-gray-600 hover:bg-gray-700 py-3 rounded-lg font-medium">
+                        <i class="fas fa-redo mr-2"></i>Reset
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+}
+
+// Close modal functions
+function closeIPPoolModal() {
+    const modal = document.getElementById('ipPoolModal');
+    if (modal) modal.remove();
+}
+
+function closeIPDetailsModal() {
+    const modal = document.getElementById('ipDetailsModal');
+    if (modal) modal.remove();
+}
+
+// =============================================================================
+// PHASE 2: GEOGRAPHIC & TIME CONTROLS DASHBOARD FUNCTIONS
+// =============================================================================
+
+// Show Geographic & Time Controls Management
+async function showDomainGeoTimeControls(domainId) {
+    try {
+        // Load geographic and time controls data
+        const [geoResponse, timeResponse] = await Promise.all([
+            fetch(`/api/domains/${domainId}/geographic`, {
+                headers: { 'Authorization': 'Bearer ' + token }
+            }),
+            fetch(`/api/domains/${domainId}/time`, {
+                headers: { 'Authorization': 'Bearer ' + token }
+            })
+        ]);
+        
+        const geoData = await geoResponse.json();
+        const timeData = await timeResponse.json();
+        
+        if (geoData.success && timeData.success) {
+            createGeoTimeControlsModal(domainId, geoData, timeData);
+        } else {
+            showNotification('Geographic/Time controls data yüklenirken hata oluştu', 'error');
+        }
+    } catch (error) {
+        showNotification('Geographic/Time controls hatası: ' + error.message, 'error');
+    }
+}
+
+// Create Geographic & Time Controls Modal
+function createGeoTimeControlsModal(domainId, geoData, timeData) {
+    const modalHTML = `
+        <div id="geoTimeControlsModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-gray-800 p-6 rounded-lg w-full max-w-7xl max-h-[95vh] overflow-y-auto">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-3xl font-bold text-white flex items-center">
+                        <i class="fas fa-globe-americas mr-3 text-indigo-400"></i>
+                        Geographic & Time Controls - ${geoData.domain}
+                    </h3>
+                    <button onclick="closeGeoTimeControlsModal()" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times text-2xl"></i>
+                    </button>
+                </div>
+                
+                <!-- Status Overview -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    <div class="bg-${geoData.enabled ? 'green' : 'gray'}-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">
+                            <i class="fas fa-${geoData.enabled ? 'check' : 'times'}-circle"></i>
+                        </div>
+                        <div class="text-sm text-gray-200">Geographic Controls</div>
+                    </div>
+                    <div class="bg-${timeData.enabled ? 'green' : 'gray'}-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">
+                            <i class="fas fa-${timeData.enabled ? 'check' : 'times'}-circle"></i>
+                        </div>
+                        <div class="text-sm text-gray-200">Time Controls</div>
+                    </div>
+                    <div class="bg-blue-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">${geoData.totalCountries || 0}</div>
+                        <div class="text-sm text-blue-200">Countries Tracked</div>
+                    </div>
+                    <div class="bg-purple-700 p-4 rounded-lg text-center">
+                        <div class="text-2xl font-bold text-white">${geoData.totalRequests || 0}</div>
+                        <div class="text-sm text-purple-200">Total Requests</div>
+                    </div>
+                </div>
+                
+                <!-- Tab Navigation -->
+                <div class="flex space-x-2 mb-6 border-b border-gray-600">
+                    <button id="geotab-geographic" onclick="showGeoTimeTab('geographic')" 
+                            class="geotab bg-indigo-600 px-4 py-2 rounded-t-lg text-white font-medium">
+                        <i class="fas fa-globe mr-2"></i>Geographic Controls
+                    </button>
+                    <button id="geotab-time" onclick="showGeoTimeTab('time')" 
+                            class="geotab bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-t-lg text-white font-medium">
+                        <i class="fas fa-clock mr-2"></i>Time Controls
+                    </button>
+                    <button id="geotab-analytics" onclick="showGeoTimeTab('analytics')" 
+                            class="geotab bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-t-lg text-white font-medium">
+                        <i class="fas fa-chart-bar mr-2"></i>Analytics
+                    </button>
+                    <button id="geotab-test" onclick="showGeoTimeTab('test')" 
+                            class="geotab bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-t-lg text-white font-medium">
+                        <i class="fas fa-vial mr-2"></i>Access Test
+                    </button>
+                </div>
+                
+                <!-- Tab Content -->
+                <div id="geocontent-geographic" class="geocontent">
+                    ${generateGeographicControlsContent(domainId, geoData)}
+                </div>
+                
+                <div id="geocontent-time" class="geocontent hidden">
+                    ${generateTimeControlsContent(domainId, timeData)}
+                </div>
+                
+                <div id="geocontent-analytics" class="geocontent hidden">
+                    ${generateGeoTimeAnalyticsContent(geoData, timeData)}
+                </div>
+                
+                <div id="geocontent-test" class="geocontent hidden">
+                    ${generateAccessTestContent(domainId)}
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+}
+
+// Generate Geographic Controls Content
+function generateGeographicControlsContent(domainId, geoData) {
+    return `
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <!-- Geographic Settings -->
+            <div class="bg-gray-700 p-6 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-cog mr-2 text-green-400"></i>Geographic Settings
+                </h4>
+                
+                <form id="geoControlsForm" onsubmit="updateGeographicControls(event, '${domainId}')">
+                    <div class="space-y-4">
+                        <!-- Enable/Disable -->
+                        <div class="flex items-center space-x-3">
+                            <input type="checkbox" id="geoEnabled" ${geoData.enabled ? 'checked' : ''}
+                                   class="rounded bg-gray-600 border-gray-500 text-blue-600">
+                            <label for="geoEnabled" class="text-white font-medium">Enable Geographic Controls</label>
+                        </div>
+                        
+                        <!-- Default Action -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Default Action</label>
+                            <select id="defaultAction" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
+                                <option value="allow" ${geoData.defaultAction === 'allow' ? 'selected' : ''}>Allow Access</option>
+                                <option value="block" ${geoData.defaultAction === 'block' ? 'selected' : ''}>Block Access</option>
+                                <option value="redirect" ${geoData.defaultAction === 'redirect' ? 'selected' : ''}>Redirect</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Allowed Countries -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Allowed Countries (Whitelist)</label>
+                            <input type="text" id="allowedCountries" 
+                                   class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
+                                   placeholder="US, CA, GB (leave empty for no restriction)"
+                                   value="${(geoData.allowedCountries || []).join(', ')}">
+                            <p class="text-xs text-gray-400 mt-1">Comma-separated country codes. If specified, only these countries are allowed.</p>
+                        </div>
+                        
+                        <!-- Blocked Countries -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Blocked Countries (Blacklist)</label>
+                            <input type="text" id="blockedCountries"
+                                   class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
+                                   placeholder="CN, RU, IR"
+                                   value="${(geoData.blockedCountries || []).join(', ')}">
+                            <p class="text-xs text-gray-400 mt-1">Comma-separated country codes to block.</p>
+                        </div>
+                        
+                        <!-- Redirect Rules -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Redirect Rules</label>
+                            <textarea id="redirectRules" rows="3"
+                                      class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
+                                      placeholder="US=us.example.com&#10;EU=eu.example.com&#10;CA=ca.example.com">${Object.entries(geoData.redirectRules || {}).map(([country, url]) => `${country}=${url}`).join('\\n')}</textarea>
+                            <p class="text-xs text-gray-400 mt-1">Format: COUNTRY=URL, one per line.</p>
+                        </div>
+                        
+                        <button type="submit" class="w-full bg-green-600 hover:bg-green-700 py-3 rounded-lg font-medium">
+                            <i class="fas fa-save mr-2"></i>Save Geographic Settings
+                        </button>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- Current Geographic Rules -->
+            <div class="bg-gray-700 p-6 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-list mr-2 text-blue-400"></i>Current Rules
+                </h4>
+                
+                <div class="space-y-4">
+                    <!-- Status -->
+                    <div class="bg-gray-800 p-3 rounded-lg">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-300">Status:</span>
+                            <span class="px-2 py-1 rounded text-xs ${geoData.enabled ? 'bg-green-600 text-white' : 'bg-gray-600 text-gray-300'}">
+                                ${geoData.enabled ? 'Enabled' : 'Disabled'}
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <!-- Default Action -->
+                    <div class="bg-gray-800 p-3 rounded-lg">
+                        <div class="flex justify-between items-center">
+                            <span class="text-gray-300">Default Action:</span>
+                            <span class="px-2 py-1 rounded text-xs bg-blue-600 text-white">
+                                ${geoData.defaultAction || 'allow'}
+                            </span>
+                        </div>
+                    </div>
+                    
+                    <!-- Allowed Countries -->
+                    ${(geoData.allowedCountries || []).length > 0 ? `
+                        <div class="bg-gray-800 p-3 rounded-lg">
+                            <div class="text-gray-300 text-sm mb-2">Allowed Countries:</div>
+                            <div class="flex flex-wrap gap-1">
+                                ${(geoData.allowedCountries || []).map(country => `
+                                    <span class="px-2 py-1 bg-green-600 rounded text-xs text-white">${country}</span>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                    
+                    <!-- Blocked Countries -->
+                    ${(geoData.blockedCountries || []).length > 0 ? `
+                        <div class="bg-gray-800 p-3 rounded-lg">
+                            <div class="text-gray-300 text-sm mb-2">Blocked Countries:</div>
+                            <div class="flex flex-wrap gap-1">
+                                ${(geoData.blockedCountries || []).map(country => `
+                                    <span class="px-2 py-1 bg-red-600 rounded text-xs text-white">${country}</span>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                    
+                    <!-- Redirect Rules -->
+                    ${Object.keys(geoData.redirectRules || {}).length > 0 ? `
+                        <div class="bg-gray-800 p-3 rounded-lg">
+                            <div class="text-gray-300 text-sm mb-2">Redirect Rules:</div>
+                            <div class="space-y-1">
+                                ${Object.entries(geoData.redirectRules || {}).map(([country, url]) => `
+                                    <div class="text-xs">
+                                        <span class="px-2 py-1 bg-purple-600 rounded text-white">${country}</span>
+                                        <i class="fas fa-arrow-right mx-2 text-gray-400"></i>
+                                        <span class="text-blue-400">${url}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Generate Time Controls Content
+function generateTimeControlsContent(domainId, timeData) {
+    return `
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <!-- Time Settings -->
+            <div class="bg-gray-700 p-6 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-cog mr-2 text-orange-400"></i>Time-based Settings
+                </h4>
+                
+                <form id="timeControlsForm" onsubmit="updateTimeControls(event, '${domainId}')">
+                    <div class="space-y-4">
+                        <!-- Enable/Disable -->
+                        <div class="flex items-center space-x-3">
+                            <input type="checkbox" id="timeEnabled" ${timeData.enabled ? 'checked' : ''}
+                                   class="rounded bg-gray-600 border-gray-500 text-blue-600">
+                            <label for="timeEnabled" class="text-white font-medium">Enable Time Controls</label>
+                        </div>
+                        
+                        <!-- Timezone -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Timezone</label>
+                            <select id="timezone" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
+                                <option value="UTC" ${timeData.timezone === 'UTC' ? 'selected' : ''}>UTC</option>
+                                <option value="EST" ${timeData.timezone === 'EST' ? 'selected' : ''}>Eastern (EST)</option>
+                                <option value="CST" ${timeData.timezone === 'CST' ? 'selected' : ''}>Central (CST)</option>
+                                <option value="MST" ${timeData.timezone === 'MST' ? 'selected' : ''}>Mountain (MST)</option>
+                                <option value="PST" ${timeData.timezone === 'PST' ? 'selected' : ''}>Pacific (PST)</option>
+                                <option value="CET" ${timeData.timezone === 'CET' ? 'selected' : ''}>Central European (CET)</option>
+                                <option value="JST" ${timeData.timezone === 'JST' ? 'selected' : ''}>Japan (JST)</option>
+                                <option value="IST" ${timeData.timezone === 'IST' ? 'selected' : ''}>India (IST)</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Business Hours -->
+                        <div class="bg-gray-800 p-4 rounded-lg">
+                            <div class="flex items-center space-x-3 mb-3">
+                                <input type="checkbox" id="businessHoursEnabled" 
+                                       ${timeData.businessHours?.enabled ? 'checked' : ''}
+                                       class="rounded bg-gray-600 border-gray-500 text-blue-600">
+                                <label for="businessHoursEnabled" class="text-white font-medium">Business Hours Restriction</label>
+                            </div>
+                            
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm text-gray-300 mb-1">Start Hour</label>
+                                    <input type="number" id="businessStart" min="0" max="23" 
+                                           value="${timeData.businessHours?.start || 9}"
+                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded text-white">
+                                </div>
+                                <div>
+                                    <label class="block text-sm text-gray-300 mb-1">End Hour</label>
+                                    <input type="number" id="businessEnd" min="0" max="23"
+                                           value="${timeData.businessHours?.end || 17}"
+                                           class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded text-white">
+                                </div>
+                            </div>
+                            
+                            <div class="mt-3">
+                                <label class="block text-sm text-gray-300 mb-2">Business Days</label>
+                                <div class="grid grid-cols-4 gap-2">
+                                    ${['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map(day => `
+                                        <label class="flex items-center space-x-1">
+                                            <input type="checkbox" value="${day}" 
+                                                   ${(timeData.businessHours?.days || []).includes(day) ? 'checked' : ''}
+                                                   class="business-day rounded bg-gray-600 border-gray-500 text-blue-600">
+                                            <span class="text-xs text-gray-300 capitalize">${day}</span>
+                                        </label>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            
+                            <div class="flex items-center space-x-3 mt-3">
+                                <input type="checkbox" id="blockOutsideHours"
+                                       ${timeData.businessHours?.blockOutsideHours ? 'checked' : ''}
+                                       class="rounded bg-gray-600 border-gray-500 text-blue-600">
+                                <label for="blockOutsideHours" class="text-sm text-gray-300">Block access outside business hours</label>
+                            </div>
+                        </div>
+                        
+                        <!-- Holiday Blocks -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Holiday Blocks</label>
+                            <textarea id="holidayBlocks" rows="3"
+                                      class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
+                                      placeholder="2024-12-25=Christmas Day&#10;2024-01-01=New Year's Day">${(timeData.holidayBlocks || []).map(h => `${h.date}=${h.name || 'Holiday'}`).join('\\n')}</textarea>
+                            <p class="text-xs text-gray-400 mt-1">Format: YYYY-MM-DD=Holiday Name, one per line.</p>
+                        </div>
+                        
+                        <button type="submit" class="w-full bg-orange-600 hover:bg-orange-700 py-3 rounded-lg font-medium">
+                            <i class="fas fa-save mr-2"></i>Save Time Settings
+                        </button>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- Current Time Info -->
+            <div class="bg-gray-700 p-6 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-clock mr-2 text-blue-400"></i>Current Time Info
+                </h4>
+                
+                <div class="space-y-4">
+                    <!-- Current Time -->
+                    <div class="bg-gray-800 p-3 rounded-lg">
+                        <div class="text-gray-300 text-sm mb-2">Current Time:</div>
+                        <div class="text-white font-mono">${timeData.currentTime?.utc || new Date().toISOString()}</div>
+                        <div class="text-gray-400 text-xs mt-1">UTC</div>
+                    </div>
+                    
+                    <!-- Local Time -->
+                    <div class="bg-gray-800 p-3 rounded-lg">
+                        <div class="text-gray-300 text-sm mb-2">Local Time (${timeData.timezone || 'UTC'}):</div>
+                        <div class="text-white font-mono">${timeData.currentTime?.local || new Date().toISOString()}</div>
+                    </div>
+                    
+                    <!-- Business Hours Status -->
+                    ${timeData.businessHours?.enabled ? `
+                        <div class="bg-gray-800 p-3 rounded-lg">
+                            <div class="text-gray-300 text-sm mb-2">Business Hours:</div>
+                            <div class="text-white">
+                                ${timeData.businessHours.start || 9}:00 - ${timeData.businessHours.end || 17}:00
+                            </div>
+                            <div class="text-gray-400 text-xs mt-1">
+                                Days: ${(timeData.businessHours.days || []).join(', ').toUpperCase()}
+                            </div>
+                        </div>
+                    ` : ''}
+                    
+                    <!-- Holiday Blocks -->
+                    ${(timeData.holidayBlocks || []).length > 0 ? `
+                        <div class="bg-gray-800 p-3 rounded-lg">
+                            <div class="text-gray-300 text-sm mb-2">Upcoming Holidays:</div>
+                            <div class="space-y-1">
+                                ${(timeData.holidayBlocks || []).slice(0, 5).map(holiday => `
+                                    <div class="text-xs">
+                                        <span class="text-red-400">${holiday.date}</span>
+                                        <span class="text-gray-400 mx-2">-</span>
+                                        <span class="text-white">${holiday.name || 'Holiday'}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Generate Geographic & Time Analytics Content
+function generateGeoTimeAnalyticsContent(geoData, timeData) {
+    return `
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Geographic Analytics -->
+            <div class="bg-gray-700 p-6 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-globe mr-2 text-green-400"></i>Geographic Analytics
+                </h4>
+                
+                ${(geoData.topCountries || []).length > 0 ? `
+                    <div class="space-y-3">
+                        ${(geoData.topCountries || []).map(country => `
+                            <div class="bg-gray-800 p-3 rounded-lg">
+                                <div class="flex justify-between items-center">
+                                    <div>
+                                        <span class="text-white font-bold">${country.code}</span>
+                                        <div class="text-xs text-gray-400">${country.uniqueIPs} unique IPs</div>
+                                    </div>
+                                    <div class="text-right">
+                                        <div class="text-white font-bold">${country.requests}</div>
+                                        <div class="text-xs text-gray-400">requests</div>
+                                    </div>
+                                </div>
+                                <div class="mt-2 text-xs">
+                                    <span class="text-green-400">${country.humans || 0} humans</span>
+                                    <span class="text-gray-400 mx-2">•</span>
+                                    <span class="text-red-400">${country.bots || 0} bots</span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : `
+                    <div class="text-center py-8">
+                        <i class="fas fa-globe text-4xl text-gray-500 mb-4"></i>
+                        <p class="text-gray-400">No geographic data available yet</p>
+                    </div>
+                `}
+            </div>
+            
+            <!-- Time Analytics -->
+            <div class="bg-gray-700 p-6 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-chart-line mr-2 text-orange-400"></i>Time Analytics
+                </h4>
+                
+                <div class="space-y-4">
+                    <!-- Current Status -->
+                    <div class="bg-gray-800 p-3 rounded-lg">
+                        <div class="text-gray-300 text-sm mb-2">Current Status:</div>
+                        <div class="flex items-center space-x-2">
+                            <i class="fas fa-circle text-${timeData.enabled ? 'green' : 'gray'}-400"></i>
+                            <span class="text-white">${timeData.enabled ? 'Time controls active' : 'Time controls disabled'}</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Active Rules -->
+                    <div class="bg-gray-800 p-3 rounded-lg">
+                        <div class="text-gray-300 text-sm mb-2">Active Rules:</div>
+                        <div class="text-white">${(timeData.rules || []).filter(r => r.enabled).length} / ${(timeData.rules || []).length}</div>
+                    </div>
+                    
+                    <!-- Timezone Info -->
+                    <div class="bg-gray-800 p-3 rounded-lg">
+                        <div class="text-gray-300 text-sm mb-2">Timezone:</div>
+                        <div class="text-white">${timeData.timezone || 'UTC'}</div>
+                    </div>
+                    
+                    <!-- Next Holiday -->
+                    ${(timeData.holidayBlocks || []).length > 0 ? `
+                        <div class="bg-gray-800 p-3 rounded-lg">
+                            <div class="text-gray-300 text-sm mb-2">Next Holiday:</div>
+                            <div class="text-white">${(timeData.holidayBlocks || [])[0]?.date} - ${(timeData.holidayBlocks || [])[0]?.name || 'Holiday'}</div>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Generate Access Test Content
+function generateAccessTestContent(domainId) {
+    return `
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Access Test Form -->
+            <div class="bg-gray-700 p-6 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-vial mr-2 text-cyan-400"></i>Access Control Test
+                </h4>
+                
+                <form id="accessTestForm" onsubmit="runAccessTest(event, '${domainId}')">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">IP Address</label>
+                            <input type="text" id="testIP" required
+                                   class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
+                                   placeholder="192.168.1.100">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">User Agent (Optional)</label>
+                            <input type="text" id="testUserAgent"
+                                   class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
+                                   placeholder="Mozilla/5.0 (Windows NT 10.0; Win64; x64)...">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Referer (Optional)</label>
+                            <input type="text" id="testReferer"
+                                   class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white"
+                                   placeholder="https://google.com">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Test Timestamp (Optional)</label>
+                            <input type="datetime-local" id="testTimestamp"
+                                   class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">Timezone (Optional)</label>
+                            <select id="testTimezone" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
+                                <option value="">Use domain default</option>
+                                <option value="UTC">UTC</option>
+                                <option value="EST">Eastern (EST)</option>
+                                <option value="CST">Central (CST)</option>
+                                <option value="MST">Mountain (MST)</option>
+                                <option value="PST">Pacific (PST)</option>
+                                <option value="CET">Central European (CET)</option>
+                                <option value="JST">Japan (JST)</option>
+                                <option value="IST">India (IST)</option>
+                            </select>
+                        </div>
+                        
+                        <button type="submit" class="w-full bg-cyan-600 hover:bg-cyan-700 py-3 rounded-lg font-medium">
+                            <i class="fas fa-play mr-2"></i>Run Access Test
+                        </button>
+                    </div>
+                </form>
+            </div>
+            
+            <!-- Test Results -->
+            <div class="bg-gray-700 p-6 rounded-lg">
+                <h4 class="text-lg font-bold text-white mb-4">
+                    <i class="fas fa-clipboard-list mr-2 text-yellow-400"></i>Test Results
+                </h4>
+                
+                <div id="accessTestResults">
+                    <div class="text-center py-8 text-gray-400">
+                        <i class="fas fa-flask text-4xl mb-4"></i>
+                        <p>Run an access test to see results</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// =============================================================================
+// RISK ASSESSMENT CONFIGURATION FUNCTIONS
+// =============================================================================
+
+// Load current risk configuration
+async function loadRiskConfiguration() {
+    try {
+        const response = await fetch('/api/ip/config', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            displayCurrentRiskConfig(data.config);
+            populateRiskConfigForm(data.config);
+        } else {
+            showNotification('Error loading risk configuration: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Error loading risk configuration: ' + error.message, 'error');
+    }
+}
+
+// Display current risk configuration
+function displayCurrentRiskConfig(config) {
+    const configHTML = `
+        <div class="space-y-4">
+            <!-- Visit Thresholds -->
+            <div class="bg-gray-800 p-3 rounded-lg">
+                <h5 class="text-white font-bold mb-2">Visit Count Thresholds</h5>
+                <div class="grid grid-cols-1 gap-2 text-sm">
+                    <div class="flex justify-between">
+                        <span class="text-green-400">Normal (Low Risk):</span>
+                        <span class="text-white">${config.normal.min} - ${config.normal.max} visits</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-yellow-400">Frequent (Medium Risk):</span>
+                        <span class="text-white">${config.frequent.min} - ${config.frequent.max} visits</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-orange-400">Suspicious (High Risk):</span>
+                        <span class="text-white">${config.suspicious.min} - ${config.suspicious.max} visits</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-red-400">High Risk (Critical):</span>
+                        <span class="text-white">${config.highRisk.min} - ${config.highRisk.max} visits</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-purple-400">Analysis Required:</span>
+                        <span class="text-white">${config.analysisRequired.min}+ visits</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Bot Detection -->
+            <div class="bg-gray-800 p-3 rounded-lg">
+                <h5 class="text-white font-bold mb-2">Bot Detection</h5>
+                <div class="text-sm space-y-1">
+                    <div class="flex justify-between">
+                        <span class="text-gray-300">Threshold:</span>
+                        <span class="text-white">${config.botDetection.visits} visits</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-300">Time Window:</span>
+                        <span class="text-white">${Math.round(config.botDetection.timeWindow / 60000)} minutes</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('currentRiskConfig').innerHTML = configHTML;
+}
+
+// Populate form with current configuration
+function populateRiskConfigForm(config) {
+    // Visit thresholds
+    document.getElementById('normal-min').value = config.normal.min;
+    document.getElementById('normal-max').value = config.normal.max;
+    document.getElementById('frequent-min').value = config.frequent.min;
+    document.getElementById('frequent-max').value = config.frequent.max;
+    document.getElementById('suspicious-min').value = config.suspicious.min;
+    document.getElementById('suspicious-max').value = config.suspicious.max;
+    document.getElementById('highRisk-min').value = config.highRisk.min;
+    document.getElementById('highRisk-max').value = config.highRisk.max;
+    document.getElementById('analysisRequired-min').value = config.analysisRequired.min;
+    
+    // Bot detection
+    document.getElementById('botDetection-visits').value = config.botDetection.visits;
+    document.getElementById('botDetection-timeWindow').value = Math.round(config.botDetection.timeWindow / 60000);
+}
+
+// Update risk configuration
+async function updateRiskConfiguration(event) {
+    event.preventDefault();
+    
+    const newConfig = {
+        normal: {
+            min: parseInt(document.getElementById('normal-min').value),
+            max: parseInt(document.getElementById('normal-max').value)
+        },
+        frequent: {
+            min: parseInt(document.getElementById('frequent-min').value),
+            max: parseInt(document.getElementById('frequent-max').value)
+        },
+        suspicious: {
+            min: parseInt(document.getElementById('suspicious-min').value),
+            max: parseInt(document.getElementById('suspicious-max').value)
+        },
+        highRisk: {
+            min: parseInt(document.getElementById('highRisk-min').value),
+            max: parseInt(document.getElementById('highRisk-max').value)
+        },
+        analysisRequired: {
+            min: parseInt(document.getElementById('analysisRequired-min').value),
+            max: Infinity
+        },
+        botDetection: {
+            visits: parseInt(document.getElementById('botDetection-visits').value),
+            timeWindow: parseInt(document.getElementById('botDetection-timeWindow').value) * 60000 // Convert to milliseconds
+        }
+    };
+    
+    try {
+        const response = await fetch('/api/ip/config', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(newConfig)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(`${data.message} (${data.reclassifiedCount} IPs updated)`, 'success');
+            loadRiskConfiguration(); // Reload to show updated config
+        } else {
+            showNotification('Error updating configuration: ' + data.message, 'error');
+            if (data.errors) {
+                data.errors.forEach(error => {
+                    showNotification('Validation error: ' + error, 'error');
+                });
+            }
+        }
+    } catch (error) {
+        showNotification('Error updating configuration: ' + error.message, 'error');
+    }
+}
+
+// Preview configuration changes
+async function previewRiskConfiguration() {
+    const newConfig = {
+        normal: {
+            min: parseInt(document.getElementById('normal-min').value),
+            max: parseInt(document.getElementById('normal-max').value)
+        },
+        frequent: {
+            min: parseInt(document.getElementById('frequent-min').value),
+            max: parseInt(document.getElementById('frequent-max').value)
+        },
+        suspicious: {
+            min: parseInt(document.getElementById('suspicious-min').value),
+            max: parseInt(document.getElementById('suspicious-max').value)
+        },
+        highRisk: {
+            min: parseInt(document.getElementById('highRisk-min').value),
+            max: parseInt(document.getElementById('highRisk-max').value)
+        },
+        analysisRequired: {
+            min: parseInt(document.getElementById('analysisRequired-min').value),
+            max: Infinity
+        },
+        botDetection: {
+            visits: parseInt(document.getElementById('botDetection-visits').value),
+            timeWindow: parseInt(document.getElementById('botDetection-timeWindow').value) * 60000
+        }
+    };
+    
+    try {
+        const response = await fetch('/api/ip/config/preview', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(newConfig)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            displayConfigPreview(data);
+        } else {
+            showNotification('Error generating preview: ' + data.message, 'error');
+            if (data.errors) {
+                data.errors.forEach(error => {
+                    showNotification('Validation error: ' + error, 'error');
+                });
+            }
+        }
+    } catch (error) {
+        showNotification('Error generating preview: ' + error.message, 'error');
+    }
+}
+
+// Display configuration preview
+function displayConfigPreview(data) {
+    const previewHTML = `
+        <div class="bg-blue-900 border border-blue-600 rounded-lg p-6">
+            <h4 class="text-white font-bold mb-4">
+                <i class="fas fa-eye mr-2 text-blue-400"></i>Configuration Preview
+            </h4>
+            
+            <div class="mb-4">
+                <div class="text-blue-200 text-sm mb-2">
+                    <strong>Impact:</strong> ${data.affectedIPs} IP(s) will be reclassified with new thresholds
+                </div>
+            </div>
+            
+            ${data.changes.length > 0 ? `
+                <div class="bg-blue-800 p-4 rounded-lg">
+                    <h5 class="text-white font-bold mb-3">Sample Classification Changes</h5>
+                    <div class="space-y-2 max-h-60 overflow-y-auto">
+                        ${data.changes.map(change => `
+                            <div class="flex justify-between items-center text-sm">
+                                <span class="text-white font-mono">${change.ip}</span>
+                                <div class="flex items-center space-x-2">
+                                    <span class="px-2 py-1 bg-${getClassificationColor(change.current.classification)}-600 rounded text-xs">
+                                        ${change.current.classification}
+                                    </span>
+                                    <i class="fas fa-arrow-right text-gray-400"></i>
+                                    <span class="px-2 py-1 bg-${getClassificationColor(change.new.classification)}-600 rounded text-xs">
+                                        ${change.new.classification}
+                                    </span>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    ${data.affectedIPs > data.changes.length ? `
+                        <div class="text-blue-200 text-sm mt-2">
+                            ... and ${data.affectedIPs - data.changes.length} more IP(s)
+                        </div>
+                    ` : ''}
+                </div>
+            ` : `
+                <div class="bg-green-800 p-4 rounded-lg text-center">
+                    <i class="fas fa-check-circle text-green-400 text-2xl mb-2"></i>
+                    <p class="text-green-200">No existing IPs will be affected by these changes.</p>
+                </div>
+            `}
+            
+            <div class="flex space-x-3 mt-6">
+                <button onclick="hideConfigPreview()" 
+                        class="flex-1 bg-gray-600 hover:bg-gray-700 py-2 rounded-lg font-medium">
+                    <i class="fas fa-times mr-2"></i>Close Preview
+                </button>
+                <button onclick="updateRiskConfiguration(event)" 
+                        class="flex-1 bg-green-600 hover:bg-green-700 py-2 rounded-lg font-medium">
+                    <i class="fas fa-save mr-2"></i>Apply Changes
+                </button>
+            </div>
+        </div>
+    `;
+    
+    const previewDiv = document.getElementById('configPreviewResults');
+    previewDiv.innerHTML = previewHTML;
+    previewDiv.classList.remove('hidden');
+}
+
+// Hide configuration preview
+function hideConfigPreview() {
+    const previewDiv = document.getElementById('configPreviewResults');
+    previewDiv.classList.add('hidden');
+}
+
+// Reset risk configuration to defaults
+async function resetRiskConfiguration() {
+    if (!confirm('Are you sure you want to reset all risk assessment settings to defaults? This will reclassify all existing IPs.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/ip/config/reset', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification(`${data.message} (${data.reclassifiedCount} IPs updated)`, 'success');
+            loadRiskConfiguration(); // Reload to show default config
+            hideConfigPreview(); // Hide any open preview
+        } else {
+            showNotification('Error resetting configuration: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Error resetting configuration: ' + error.message, 'error');
+    }
+}
+
+// Geographic & Time Controls Functions
+
+// Tab switching for Geographic & Time Controls
+function showGeoTimeTab(tabName) {
+    // Hide all content
+    document.querySelectorAll('.geocontent').forEach(content => {
+        content.classList.add('hidden');
+    });
+    
+    // Show selected content
+    const content = document.getElementById(`geocontent-${tabName}`);
+    if (content) {
+        content.classList.remove('hidden');
+    }
+    
+    // Update tab buttons
+    document.querySelectorAll('.geotab').forEach(tab => {
+        tab.classList.remove('bg-indigo-600');
+        tab.classList.add('bg-gray-700', 'hover:bg-gray-600');
+    });
+    
+    const activeTab = document.getElementById(`geotab-${tabName}`);
+    if (activeTab) {
+        activeTab.classList.remove('bg-gray-700', 'hover:bg-gray-600');
+        activeTab.classList.add('bg-indigo-600');
+    }
+}
+
+// Update Geographic Controls
+async function updateGeographicControls(event, domainId) {
+    event.preventDefault();
+    
+    const formData = {
+        enabled: document.getElementById('geoEnabled').checked,
+        defaultAction: document.getElementById('defaultAction').value,
+        allowedCountries: document.getElementById('allowedCountries').value
+            .split(',').map(c => c.trim().toUpperCase()).filter(c => c),
+        blockedCountries: document.getElementById('blockedCountries').value
+            .split(',').map(c => c.trim().toUpperCase()).filter(c => c),
+        redirectRules: {}
+    };
+    
+    // Parse redirect rules
+    const redirectLines = document.getElementById('redirectRules').value.split('\n');
+    for (const line of redirectLines) {
+        const [country, url] = line.split('=').map(s => s.trim());
+        if (country && url) {
+            formData.redirectRules[country.toUpperCase()] = url;
+        }
+    }
+    
+    try {
+        const response = await fetch(`/api/domains/${domainId}/geographic`, {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(formData)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('Geographic controls updated successfully', 'success');
+            // Reload the modal to show updated data
+            setTimeout(() => {
+                closeGeoTimeControlsModal();
+                showDomainGeoTimeControls(domainId);
+            }, 1500);
+        } else {
+            showNotification('Error updating geographic controls: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Error updating geographic controls: ' + error.message, 'error');
+    }
+}
+
+// Update Time Controls
+async function updateTimeControls(event, domainId) {
+    event.preventDefault();
+    
+    const businessDays = Array.from(document.querySelectorAll('.business-day:checked'))
+        .map(cb => cb.value);
+    
+    const formData = {
+        enabled: document.getElementById('timeEnabled').checked,
+        timezone: document.getElementById('timezone').value,
+        businessHours: {
+            enabled: document.getElementById('businessHoursEnabled').checked,
+            start: parseInt(document.getElementById('businessStart').value),
+            end: parseInt(document.getElementById('businessEnd').value),
+            days: businessDays,
+            blockOutsideHours: document.getElementById('blockOutsideHours').checked
+        },
+        holidayBlocks: []
+    };
+    
+    // Parse holiday blocks
+    const holidayLines = document.getElementById('holidayBlocks').value.split('\n');
+    for (const line of holidayLines) {
+        const [date, name] = line.split('=').map(s => s.trim());
+        if (date && name) {
+            formData.holidayBlocks.push({
+                date: date,
+                name: name,
+                action: 'block'
+            });
+        }
+    }
+    
+    try {
+        const response = await fetch(`/api/domains/${domainId}/time`, {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(formData)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('Time controls updated successfully', 'success');
+            // Reload the modal to show updated data
+            setTimeout(() => {
+                closeGeoTimeControlsModal();
+                showDomainGeoTimeControls(domainId);
+            }, 1500);
+        } else {
+            showNotification('Error updating time controls: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Error updating time controls: ' + error.message, 'error');
+    }
+}
+
+// Run Access Test
+async function runAccessTest(event, domainId) {
+    event.preventDefault();
+    
+    const testData = {
+        ip: document.getElementById('testIP').value.trim(),
+        userAgent: document.getElementById('testUserAgent').value.trim(),
+        referer: document.getElementById('testReferer').value.trim(),
+        timezone: document.getElementById('testTimezone').value
+    };
+    
+    // Convert datetime-local to timestamp
+    const timestampInput = document.getElementById('testTimestamp').value;
+    if (timestampInput) {
+        testData.timestamp = new Date(timestampInput).getTime();
+    }
+    
+    if (!testData.ip) {
+        showNotification('IP address is required for testing', 'error');
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/domains/${domainId}/access-test`, {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + token,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(testData)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            displayAccessTestResults(data);
+        } else {
+            showNotification('Error running access test: ' + data.message, 'error');
+        }
+    } catch (error) {
+        showNotification('Error running access test: ' + error.message, 'error');
+    }
+}
+
+// Display Access Test Results
+function displayAccessTestResults(testResults) {
+    const resultsHTML = `
+        <div class="space-y-4">
+            <!-- Overall Result -->
+            <div class="bg-${testResults.allowed ? 'green' : 'red'}-900 border border-${testResults.allowed ? 'green' : 'red'}-600 rounded-lg p-4">
+                <div class="flex items-center space-x-3">
+                    <i class="fas fa-${testResults.allowed ? 'check-circle' : 'times-circle'} text-${testResults.allowed ? 'green' : 'red'}-400 text-2xl"></i>
+                    <div>
+                        <h5 class="text-white font-bold">${testResults.allowed ? 'Access Granted' : 'Access Denied'}</h5>
+                        <p class="text-${testResults.allowed ? 'green' : 'red'}-200 text-sm">
+                            Action: ${testResults.finalAction}
+                        </p>
+                    </div>
+                </div>
+                ${testResults.redirectUrl ? `
+                    <div class="mt-2 text-${testResults.allowed ? 'green' : 'red'}-200 text-sm">
+                        <i class="fas fa-external-link-alt mr-1"></i>
+                        Redirect URL: ${testResults.redirectUrl}
+                    </div>
+                ` : ''}
+            </div>
+            
+            <!-- Reasons -->
+            <div class="bg-gray-800 p-4 rounded-lg">
+                <h6 class="text-white font-bold mb-2">Reasons:</h6>
+                <ul class="space-y-1">
+                    ${testResults.reason.map(reason => `
+                        <li class="text-gray-300 text-sm">
+                            <i class="fas fa-arrow-right mr-2 text-blue-400"></i>
+                            ${reason}
+                        </li>
+                    `).join('')}
+                </ul>
+            </div>
+            
+            <!-- Control Details -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- IP Control -->
+                <div class="bg-gray-800 p-3 rounded-lg">
+                    <h6 class="text-gray-300 text-sm font-bold mb-2">IP Control</h6>
+                    <div class="text-white text-sm">
+                        Status: <span class="px-2 py-1 rounded text-xs bg-${getIPStatusColor(testResults.controls.ip?.status)}-600">
+                            ${testResults.controls.ip?.status || 'unknown'}
+                        </span>
+                    </div>
+                </div>
+                
+                <!-- Geographic Control -->
+                <div class="bg-gray-800 p-3 rounded-lg">
+                    <h6 class="text-gray-300 text-sm font-bold mb-2">Geographic Control</h6>
+                    <div class="text-white text-sm">
+                        Country: <span class="px-2 py-1 rounded text-xs bg-blue-600">${testResults.controls.geographic?.country || 'Unknown'}</span>
+                    </div>
+                    <div class="text-xs text-gray-400 mt-1">
+                        Action: ${testResults.controls.geographic?.action || 'allow'}
+                    </div>
+                </div>
+                
+                <!-- Time Control -->
+                <div class="bg-gray-800 p-3 rounded-lg">
+                    <h6 class="text-gray-300 text-sm font-bold mb-2">Time Control</h6>
+                    <div class="text-white text-sm">
+                        ${testResults.controls.time?.allowed ? 
+                            '<span class="px-2 py-1 rounded text-xs bg-green-600">Allowed</span>' : 
+                            '<span class="px-2 py-1 rounded text-xs bg-red-600">Blocked</span>'
+                        }
+                    </div>
+                    ${testResults.controls.time?.currentTime ? `
+                        <div class="text-xs text-gray-400 mt-1">
+                            ${testResults.controls.time.currentTime.day} ${testResults.controls.time.currentTime.hour}:00
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('accessTestResults').innerHTML = resultsHTML;
+}
+
+// Helper function for IP status colors
+function getIPStatusColor(status) {
+    switch (status) {
+        case 'whitelisted': return 'green';
+        case 'blacklisted': return 'red';
+        case 'graylisted': return 'yellow';
+        default: return 'gray';
+    }
+}
+
+// Close Geographic & Time Controls Modal
+function closeGeoTimeControlsModal() {
+    const modal = document.getElementById('geoTimeControlsModal');
+    if (modal) modal.remove();
+}
+
+// =============================================================================
+// PHASE 3: CAMPAIGN TRACKING & RATE LIMITING MODAL FUNCTIONS
+// =============================================================================
+
+// Show Campaign & Rate Limiting Controls Management
+async function showDomainCampaignRateControls(domainId) {
+    try {
+        // Fetch both campaigns and rate limiting data
+        const [campaignResponse, rateLimitResponse] = await Promise.all([
+            fetch(`/api/domains/${domainId}/campaigns`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            }),
+            fetch(`/api/domains/${domainId}/rate-limiting`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            })
+        ]);
+        
+        if (campaignResponse.ok && rateLimitResponse.ok) {
+            const campaignData = await campaignResponse.json();
+            const rateLimitData = await rateLimitResponse.json();
+            
+            createCampaignRateControlsModal(domainId, campaignData, rateLimitData);
+        } else {
+            showNotification('Campaign/Rate limiting data yüklenirken hata oluştu', 'error');
+        }
+    } catch (error) {
+        showNotification('Campaign/Rate limiting hatası: ' + error.message, 'error');
+    }
+}
+
+// Create Campaign & Rate Limiting Controls Modal
+function createCampaignRateControlsModal(domainId, campaignData, rateLimitData) {
+    // Remove existing modal if any
+    const existingModal = document.getElementById('campaignRateControlsModal');
+    if (existingModal) existingModal.remove();
+    
+    const modalHTML = `
+        <div id="campaignRateControlsModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-gray-800 rounded-lg p-6 max-w-6xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-xl font-bold text-white flex items-center">
+                        <i class="fas fa-chart-line mr-3 text-purple-400"></i>
+                        Campaign Tracking & Rate Limiting - ${campaignData.domain}
+                    </h3>
+                    <button onclick="closeCampaignRateControlsModal()" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
+                
+                <!-- Domain Summary -->
+                <div class="bg-gray-700 rounded-lg p-4 mb-6">
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="text-center">
+                            <div class="text-2xl font-bold text-purple-400">${campaignData.totalCampaigns || 0}</div>
+                            <div class="text-sm text-gray-200">Total Campaigns</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-2xl font-bold text-blue-400">${campaignData.totalClicks || 0}</div>
+                            <div class="text-sm text-gray-200">Total Clicks</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-2xl font-bold text-green-400">${campaignData.totalSources || 0}</div>
+                            <div class="text-sm text-gray-200">Traffic Sources</div>
+                        </div>
+                        <div class="text-center">
+                            <div class="text-2xl font-bold ${rateLimitData.enabled ? 'text-green-400' : 'text-red-400'}">${rateLimitData.enabled ? 'ON' : 'OFF'}</div>
+                            <div class="text-sm text-gray-200">Rate Limiting</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Tab Navigation -->
+                <div class="flex space-x-1 mb-6 bg-gray-700 p-1 rounded-lg">
+                    <button id="campaignratetab-campaigns" onclick="showCampaignRateTab('campaigns')" 
+                            class="px-4 py-2 rounded text-sm font-medium bg-purple-600 text-white">
+                        <i class="fas fa-chart-line mr-2"></i>Campaign Tracking
+                    </button>
+                    <button id="campaignratetab-ratelimiting" onclick="showCampaignRateTab('ratelimiting')" 
+                            class="px-4 py-2 rounded text-sm font-medium bg-gray-600 hover:bg-gray-500 text-white">
+                        <i class="fas fa-tachometer-alt mr-2"></i>Rate Limiting
+                    </button>
+                    <button id="campaignratetab-analytics" onclick="showCampaignRateTab('analytics')" 
+                            class="px-4 py-2 rounded text-sm font-medium bg-gray-600 hover:bg-gray-500 text-white">
+                        <i class="fas fa-chart-bar mr-2"></i>Analytics
+                    </button>
+                    <button id="campaignratetab-test" onclick="showCampaignRateTab('test')" 
+                            class="px-4 py-2 rounded text-sm font-medium bg-gray-600 hover:bg-gray-500 text-white">
+                        <i class="fas fa-flask mr-2"></i>Test & Monitor
+                    </button>
+                </div>
+                
+                <!-- Tab Content -->
+                <div id="campaignrate-content-campaigns" class="campaignrate-tab-content">
+                    ${generateCampaignTrackingContent(domainId, campaignData)}
+                </div>
+                
+                <div id="campaignrate-content-ratelimiting" class="campaignrate-tab-content hidden">
+                    ${generateRateLimitingContent(domainId, rateLimitData)}
+                </div>
+                
+                <div id="campaignrate-content-analytics" class="campaignrate-tab-content hidden">
+                    ${generateCampaignRateAnalyticsContent(campaignData, rateLimitData)}
+                </div>
+                
+                <div id="campaignrate-content-test" class="campaignrate-tab-content hidden">
+                    ${generateCampaignRateTestContent(domainId)}
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    showCampaignRateTab('campaigns');
+}
+
+// Generate Campaign Tracking Content
+function generateCampaignTrackingContent(domainId, campaignData) {
+    return `
+        <div class="space-y-6">
+            <!-- Campaign Settings -->
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h4 class="text-lg font-semibold text-white mb-4 flex items-center">
+                    <i class="fas fa-cog mr-2 text-purple-400"></i>Campaign Tracking Settings
+                </h4>
+                
+                <form id="campaignTrackingForm" onsubmit="updateCampaignSettings(event, '${domainId}')">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="flex items-center space-x-3 text-white">
+                                <input type="checkbox" id="campaignEnabled" ${campaignData.enabled ? 'checked' : ''}
+                                       class="w-4 h-4 text-purple-600 bg-gray-600 border-gray-500 rounded focus:ring-purple-500">
+                                <span>Enable Campaign Tracking</span>
+                            </label>
+                        </div>
+                        <div>
+                            <label class="flex items-center space-x-3 text-white">
+                                <input type="checkbox" id="utmTracking" ${campaignData.settings?.utmTracking ? 'checked' : ''}
+                                       class="w-4 h-4 text-purple-600 bg-gray-600 border-gray-500 rounded focus:ring-purple-500">
+                                <span>UTM Parameter Tracking</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label for="validUtmSources" class="block text-white font-medium mb-2">Valid UTM Sources</label>
+                            <input type="text" id="validUtmSources" 
+                                   value="${(campaignData.settings?.validUtmSources || []).join(', ')}"
+                                   class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white"
+                                   placeholder="facebook, google, twitter, email">
+                        </div>
+                        <div>
+                            <label for="customParameters" class="block text-white font-medium mb-2">Custom Parameters</label>
+                            <input type="text" id="customParameters" 
+                                   value="${(campaignData.settings?.customParameters || []).join(', ')}"
+                                   class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white"
+                                   placeholder="custom_param1, custom_param2">
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded text-white">
+                        <i class="fas fa-save mr-2"></i>Save Campaign Settings
+                    </button>
+                </form>
+            </div>
+            
+            <!-- Active Campaigns -->
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h4 class="text-lg font-semibold text-white mb-4 flex items-center">
+                    <i class="fas fa-list mr-2 text-green-400"></i>Active Campaigns
+                </h4>
+                
+                <div class="overflow-x-auto">
+                    <table class="min-w-full text-white">
+                        <thead>
+                            <tr class="border-b border-gray-600">
+                                <th class="text-left py-2">Campaign</th>
+                                <th class="text-left py-2">Clicks</th>
+                                <th class="text-left py-2">Sources</th>
+                                <th class="text-left py-2">Last Activity</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${(campaignData.topCampaigns || []).map(([name, data]) => `
+                                <tr class="border-b border-gray-600">
+                                    <td class="py-2 font-medium">${name}</td>
+                                    <td class="py-2 text-purple-400">${data.clicks || 0}</td>
+                                    <td class="py-2 text-blue-400">${Object.keys(data.sources || {}).length}</td>
+                                    <td class="py-2 text-gray-300">${data.lastSeen ? new Date(data.lastSeen).toLocaleString() : 'N/A'}</td>
+                                </tr>
+                            `).join('')}
+                            ${(campaignData.topCampaigns || []).length === 0 ? '<tr><td colspan="4" class="py-4 text-center text-gray-400">No campaigns found</td></tr>' : ''}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Generate Rate Limiting Content
+function generateRateLimitingContent(domainId, rateLimitData) {
+    return `
+        <div class="space-y-6">
+            <!-- Rate Limiting Settings -->
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h4 class="text-lg font-semibold text-white mb-4 flex items-center">
+                    <i class="fas fa-cog mr-2 text-blue-400"></i>Rate Limiting Settings
+                </h4>
+                
+                <form id="rateLimitingForm" onsubmit="updateRateLimitingSettings(event, '${domainId}')">
+                    <div class="mb-4">
+                        <label class="flex items-center space-x-3 text-white">
+                            <input type="checkbox" id="rateLimitEnabled" ${rateLimitData.enabled ? 'checked' : ''}
+                                   class="w-4 h-4 text-blue-600 bg-gray-600 border-gray-500 rounded focus:ring-blue-500">
+                            <span>Enable Rate Limiting</span>
+                        </label>
+                    </div>
+                    
+                    <!-- General Rules -->
+                    <div class="mb-6">
+                        <h5 class="text-white font-medium mb-3">General Rate Limits</h5>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                                <label for="perIPRequests" class="block text-gray-300 text-sm mb-2">Requests per IP/minute</label>
+                                <input type="number" id="perIPRequests" 
+                                       value="${rateLimitData.rules?.perIP?.requests || 60}"
+                                       class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white">
+                            </div>
+                            <div>
+                                <label for="perSessionRequests" class="block text-gray-300 text-sm mb-2">Requests per Session/hour</label>
+                                <input type="number" id="perSessionRequests" 
+                                       value="${rateLimitData.rules?.perSession?.requests || 300}"
+                                       class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white">
+                            </div>
+                            <div>
+                                <label for="burstRequests" class="block text-gray-300 text-sm mb-2">Burst Limit/second</label>
+                                <input type="number" id="burstRequests" 
+                                       value="${rateLimitData.rules?.burst?.requests || 10}"
+                                       class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Bot Rules -->
+                    <div class="mb-6">
+                        <h5 class="text-white font-medium mb-3">Bot Rate Limits</h5>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label for="botPerIPRequests" class="block text-gray-300 text-sm mb-2">Bot Requests per IP/minute</label>
+                                <input type="number" id="botPerIPRequests" 
+                                       value="${rateLimitData.botLimiting?.perIP?.requests || 10}"
+                                       class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white">
+                            </div>
+                            <div>
+                                <label for="botBurstRequests" class="block text-gray-300 text-sm mb-2">Bot Burst Limit/second</label>
+                                <input type="number" id="botBurstRequests" 
+                                       value="${rateLimitData.botLimiting?.burst?.requests || 2}"
+                                       class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded text-white">
+                        <i class="fas fa-save mr-2"></i>Save Rate Limiting Settings
+                    </button>
+                </form>
+            </div>
+            
+            <!-- Current Load Status -->
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h4 class="text-lg font-semibold text-white mb-4 flex items-center">
+                    <i class="fas fa-chart-line mr-2 text-green-400"></i>Current Load Status
+                </h4>
+                
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div class="text-center">
+                        <div class="text-2xl font-bold text-blue-400">${rateLimitData.currentLoad || 0}</div>
+                        <div class="text-sm text-gray-300">Active Connections</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-2xl font-bold ${rateLimitData.enabled ? 'text-green-400' : 'text-red-400'}">${rateLimitData.enabled ? 'ACTIVE' : 'DISABLED'}</div>
+                        <div class="text-sm text-gray-300">Rate Limiting Status</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-2xl font-bold text-yellow-400">${(rateLimitData.alerts || []).length}</div>
+                        <div class="text-sm text-gray-300">Active Alerts</div>
+                    </div>
+                </div>
+                
+                <!-- Alerts -->
+                ${(rateLimitData.alerts || []).length > 0 ? `
+                    <div class="space-y-2">
+                        <h5 class="text-white font-medium">Recent Alerts:</h5>
+                        ${rateLimitData.alerts.map(alert => `
+                            <div class="bg-gray-600 p-3 rounded flex items-center">
+                                <i class="fas fa-${alert.type === 'warning' ? 'exclamation-triangle text-yellow-400' : 'info-circle text-blue-400'} mr-3"></i>
+                                <div>
+                                    <div class="text-white text-sm">${alert.message}</div>
+                                    <div class="text-gray-400 text-xs">${new Date(alert.timestamp).toLocaleString()}</div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                ` : '<div class="text-gray-400 text-center py-4">No active alerts</div>'}
+            </div>
+        </div>
+    `;
+}
+
+// Generate Campaign & Rate Limiting Analytics Content
+function generateCampaignRateAnalyticsContent(campaignData, rateLimitData) {
+    return `
+        <div class="space-y-6">
+            <!-- Campaign Analytics -->
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h4 class="text-lg font-semibold text-white mb-4 flex items-center">
+                    <i class="fas fa-chart-pie mr-2 text-purple-400"></i>Campaign Performance Analytics
+                </h4>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <!-- Top Campaigns Chart -->
+                    <div class="bg-gray-600 p-4 rounded">
+                        <h5 class="text-white font-medium mb-3">Top Campaigns</h5>
+                        <div class="space-y-2">
+                            ${(campaignData.topCampaigns || []).slice(0, 5).map(([name, data]) => `
+                                <div class="flex justify-between items-center">
+                                    <span class="text-gray-300 text-sm">${name}</span>
+                                    <span class="text-purple-400 font-medium">${data.clicks || 0} clicks</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    
+                    <!-- Top Sources Chart -->
+                    <div class="bg-gray-600 p-4 rounded">
+                        <h5 class="text-white font-medium mb-3">Top Traffic Sources</h5>
+                        <div class="space-y-2">
+                            ${(campaignData.topSources || []).slice(0, 5).map(([name, data]) => `
+                                <div class="flex justify-between items-center">
+                                    <span class="text-gray-300 text-sm">${name}</span>
+                                    <span class="text-blue-400 font-medium">${data.clicks || 0} clicks</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Recent Campaign Activity -->
+                <div class="bg-gray-600 p-4 rounded">
+                    <h5 class="text-white font-medium mb-3">Recent Campaign Activity</h5>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-white text-sm">
+                            <thead>
+                                <tr class="border-b border-gray-500">
+                                    <th class="text-left py-2">Time</th>
+                                    <th class="text-left py-2">Campaign</th>
+                                    <th class="text-left py-2">Source</th>
+                                    <th class="text-left py-2">Country</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${(campaignData.recentClicks || []).slice(0, 10).map(click => `
+                                    <tr class="border-b border-gray-500">
+                                        <td class="py-2 text-gray-300">${new Date(click.timestamp).toLocaleTimeString()}</td>
+                                        <td class="py-2 text-purple-400">${click.campaign}</td>
+                                        <td class="py-2 text-blue-400">${click.source}</td>
+                                        <td class="py-2 text-green-400">${click.country}</td>
+                                    </tr>
+                                `).join('')}
+                                ${(campaignData.recentClicks || []).length === 0 ? '<tr><td colspan="4" class="py-4 text-center text-gray-400">No recent activity</td></tr>' : ''}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Rate Limiting Analytics -->
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h4 class="text-lg font-semibold text-white mb-4 flex items-center">
+                    <i class="fas fa-tachometer-alt mr-2 text-blue-400"></i>Rate Limiting Performance
+                </h4>
+                
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div class="bg-gray-600 p-4 rounded text-center">
+                        <div class="text-2xl font-bold text-green-400">${rateLimitData.currentLoad || 0}</div>
+                        <div class="text-sm text-gray-300">Current Load</div>
+                    </div>
+                    <div class="bg-gray-600 p-4 rounded text-center">
+                        <div class="text-2xl font-bold text-blue-400">${rateLimitData.rules?.perIP?.requests || 60}</div>
+                        <div class="text-sm text-gray-300">IP Limit/min</div>
+                    </div>
+                    <div class="bg-gray-600 p-4 rounded text-center">
+                        <div class="text-2xl font-bold text-yellow-400">${rateLimitData.rules?.burst?.requests || 10}</div>
+                        <div class="text-sm text-gray-300">Burst Limit/sec</div>
+                    </div>
+                    <div class="bg-gray-600 p-4 rounded text-center">
+                        <div class="text-2xl font-bold text-red-400">${rateLimitData.botLimiting?.perIP?.requests || 10}</div>
+                        <div class="text-sm text-gray-300">Bot Limit/min</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Generate Campaign & Rate Limiting Test Content
+function generateCampaignRateTestContent(domainId) {
+    return `
+        <div class="space-y-6">
+            <!-- Campaign Tracking Test -->
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h4 class="text-lg font-semibold text-white mb-4 flex items-center">
+                    <i class="fas fa-chart-line mr-2 text-purple-400"></i>Campaign Tracking Test
+                </h4>
+                
+                <form id="campaignTestForm" onsubmit="testCampaignTracking(event, '${domainId}')">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label for="testUtmSource" class="block text-gray-300 text-sm mb-2">UTM Source</label>
+                            <input type="text" id="testUtmSource" value="google" 
+                                   class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white">
+                        </div>
+                        <div>
+                            <label for="testUtmCampaign" class="block text-gray-300 text-sm mb-2">UTM Campaign</label>
+                            <input type="text" id="testUtmCampaign" value="summer_sale" 
+                                   class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white">
+                        </div>
+                        <div>
+                            <label for="testUtmMedium" class="block text-gray-300 text-sm mb-2">UTM Medium</label>
+                            <input type="text" id="testUtmMedium" value="cpc" 
+                                   class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white">
+                        </div>
+                        <div>
+                            <label for="testReferrer" class="block text-gray-300 text-sm mb-2">Referrer</label>
+                            <input type="text" id="testReferrer" value="https://google.com" 
+                                   class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white">
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="bg-purple-600 hover:bg-purple-700 px-6 py-2 rounded text-white">
+                        <i class="fas fa-play mr-2"></i>Test Campaign Tracking
+                    </button>
+                </form>
+                
+                <div id="campaignTestResult" class="mt-4"></div>
+            </div>
+            
+            <!-- Rate Limiting Test -->
+            <div class="bg-gray-700 rounded-lg p-4">
+                <h4 class="text-lg font-semibold text-white mb-4 flex items-center">
+                    <i class="fas fa-tachometer-alt mr-2 text-blue-400"></i>Rate Limiting Test
+                </h4>
+                
+                <form id="rateLimitTestForm" onsubmit="testRateLimit(event, '${domainId}')">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label for="testRateLimitIP" class="block text-gray-300 text-sm mb-2">Test IP Address</label>
+                            <input type="text" id="testRateLimitIP" value="192.168.1.100" 
+                                   class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white">
+                        </div>
+                        <div>
+                            <label for="testRateLimitUserAgent" class="block text-gray-300 text-sm mb-2">User Agent</label>
+                            <input type="text" id="testRateLimitUserAgent" 
+                                   value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" 
+                                   class="w-full p-2 bg-gray-600 border border-gray-500 rounded text-white">
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded text-white">
+                        <i class="fas fa-play mr-2"></i>Test Rate Limiting
+                    </button>
+                </form>
+                
+                <div id="rateLimitTestResult" class="mt-4"></div>
+            </div>
+        </div>
+    `;
+}
+
+// Campaign & Rate Limiting Tab Functions
+
+// Tab switching for Campaign & Rate Limiting Controls
+function showCampaignRateTab(tabName) {
+    // Hide all tab contents
+    document.querySelectorAll('.campaignrate-tab-content').forEach(content => {
+        content.classList.add('hidden');
+    });
+    
+    // Show selected tab content
+    const selectedContent = document.getElementById(`campaignrate-content-${tabName}`);
+    if (selectedContent) {
+        selectedContent.classList.remove('hidden');
+    }
+    
+    // Update tab buttons
+    document.querySelectorAll('[id^="campaignratetab-"]').forEach(button => {
+        button.classList.remove('bg-purple-600', 'bg-blue-600');
+        button.classList.add('bg-gray-600', 'hover:bg-gray-500');
+    });
+    
+    const activeTab = document.getElementById(`campaignratetab-${tabName}`);
+    if (activeTab) {
+        activeTab.classList.remove('bg-gray-600', 'hover:bg-gray-500');
+        if (tabName === 'campaigns') {
+            activeTab.classList.add('bg-purple-600');
+        } else {
+            activeTab.classList.add('bg-blue-600');
+        }
+    }
+}
+
+// Update Campaign Settings
+async function updateCampaignSettings(event, domainId) {
+    event.preventDefault();
+    
+    const formData = new FormData(event.target);
+    const settings = {
+        enabled: document.getElementById('campaignEnabled').checked,
+        utmTracking: document.getElementById('utmTracking').checked,
+        validUtmSources: document.getElementById('validUtmSources').value.split(',').map(s => s.trim()).filter(s => s),
+        customParameters: document.getElementById('customParameters').value.split(',').map(s => s.trim()).filter(s => s)
+    };
+    
+    try {
+        const response = await fetch(`/api/domains/${domainId}/campaigns`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(settings)
+        });
+        
+        if (response.ok) {
+            showNotification('Campaign settings updated successfully', 'success');
+            // Reload the modal
+            setTimeout(() => {
+                closeCampaignRateControlsModal();
+                showDomainCampaignRateControls(domainId);
+            }, 1000);
+        } else {
+            const result = await response.json();
+            showNotification('Failed to update campaign settings: ' + result.message, 'error');
+        }
+    } catch (error) {
+        console.error('Campaign settings update error:', error);
+        showNotification('Campaign settings update failed: ' + error.message, 'error');
+    }
+}
+
+// Update Rate Limiting Settings
+async function updateRateLimitingSettings(event, domainId) {
+    event.preventDefault();
+    
+    const settings = {
+        enabled: document.getElementById('rateLimitEnabled').checked,
+        rules: {
+            perIP: {
+                requests: parseInt(document.getElementById('perIPRequests').value) || 60,
+                window: 60
+            },
+            perSession: {
+                requests: parseInt(document.getElementById('perSessionRequests').value) || 300,
+                window: 3600
+            },
+            burst: {
+                requests: parseInt(document.getElementById('burstRequests').value) || 10,
+                window: 1
+            }
+        },
+        botLimiting: {
+            perIP: {
+                requests: parseInt(document.getElementById('botPerIPRequests').value) || 10,
+                window: 60
+            },
+            burst: {
+                requests: parseInt(document.getElementById('botBurstRequests').value) || 2,
+                window: 1
+            }
+        }
+    };
+    
+    try {
+        const response = await fetch(`/api/domains/${domainId}/rate-limiting`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(settings)
+        });
+        
+        if (response.ok) {
+            showNotification('Rate limiting settings updated successfully', 'success');
+            // Reload the modal
+            setTimeout(() => {
+                closeCampaignRateControlsModal();
+                showDomainCampaignRateControls(domainId);
+            }, 1000);
+        } else {
+            const result = await response.json();
+            showNotification('Failed to update rate limiting settings: ' + result.message, 'error');
+        }
+    } catch (error) {
+        console.error('Rate limiting settings update error:', error);
+        showNotification('Rate limiting settings update failed: ' + error.message, 'error');
+    }
+}
+
+// Test Campaign Tracking
+async function testCampaignTracking(event, domainId) {
+    event.preventDefault();
+    
+    const campaignData = {
+        utmSource: document.getElementById('testUtmSource').value,
+        utmCampaign: document.getElementById('testUtmCampaign').value,
+        utmMedium: document.getElementById('testUtmMedium').value,
+        referrer: document.getElementById('testReferrer').value,
+        ip: '192.168.1.100',
+        country: 'US'
+    };
+    
+    try {
+        const response = await fetch(`/api/domains/${domainId}/campaigns/track`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(campaignData)
+        });
+        
+        const result = await response.json();
+        
+        const resultDiv = document.getElementById('campaignTestResult');
+        if (response.ok) {
+            resultDiv.innerHTML = `
+                <div class="bg-green-600 p-4 rounded mt-4">
+                    <h5 class="text-white font-bold mb-2">✅ Campaign Tracking Test - SUCCESS</h5>
+                    <div class="text-green-100 text-sm">
+                        <div>Campaign tracked successfully!</div>
+                        <div><strong>Campaign:</strong> ${campaignData.utmCampaign}</div>
+                        <div><strong>Source:</strong> ${campaignData.utmSource}</div>
+                        <div><strong>Medium:</strong> ${campaignData.utmMedium}</div>
+                    </div>
+                </div>
+            `;
+        } else {
+            resultDiv.innerHTML = `
+                <div class="bg-red-600 p-4 rounded mt-4">
+                    <h5 class="text-white font-bold mb-2">❌ Campaign Tracking Test - FAILED</h5>
+                    <div class="text-red-100 text-sm">${result.message}</div>
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Campaign tracking test error:', error);
+        const resultDiv = document.getElementById('campaignTestResult');
+        resultDiv.innerHTML = `
+            <div class="bg-red-600 p-4 rounded mt-4">
+                <h5 class="text-white font-bold mb-2">❌ Campaign Tracking Test - ERROR</h5>
+                <div class="text-red-100 text-sm">${error.message}</div>
+            </div>
+        `;
+    }
+}
+
+// Test Rate Limiting
+async function testRateLimit(event, domainId) {
+    event.preventDefault();
+    
+    const testData = {
+        ip: document.getElementById('testRateLimitIP').value,
+        userAgent: document.getElementById('testRateLimitUserAgent').value
+    };
+    
+    try {
+        const response = await fetch(`/api/domains/${domainId}/rate-limiting/check`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(testData)
+        });
+        
+        const result = await response.json();
+        
+        const resultDiv = document.getElementById('rateLimitTestResult');
+        if (response.ok) {
+            resultDiv.innerHTML = `
+                <div class="bg-${result.allowed ? 'green' : 'yellow'}-600 p-4 rounded mt-4">
+                    <h5 class="text-white font-bold mb-2">${result.allowed ? '✅' : '⚠️'} Rate Limit Test - ${result.allowed ? 'ALLOWED' : 'LIMITED'}</h5>
+                    <div class="text-${result.allowed ? 'green' : 'yellow'}-100 text-sm">
+                        <div><strong>IP:</strong> ${testData.ip}</div>
+                        <div><strong>Status:</strong> ${result.allowed ? 'Request allowed' : result.reason}</div>
+                        ${result.retryAfter ? `<div><strong>Retry After:</strong> ${result.retryAfter} seconds</div>` : ''}
+                    </div>
+                </div>
+            `;
+        } else {
+            resultDiv.innerHTML = `
+                <div class="bg-red-600 p-4 rounded mt-4">
+                    <h5 class="text-white font-bold mb-2">❌ Rate Limit Test - FAILED</h5>
+                    <div class="text-red-100 text-sm">${result.message}</div>
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Rate limit test error:', error);
+        const resultDiv = document.getElementById('rateLimitTestResult');
+        resultDiv.innerHTML = `
+            <div class="bg-red-600 p-4 rounded mt-4">
+                <h5 class="text-white font-bold mb-2">❌ Rate Limit Test - ERROR</h5>
+                <div class="text-red-100 text-sm">${error.message}</div>
+            </div>
+        `;
+    }
+}
+
+// Close Campaign & Rate Limiting Controls Modal
+function closeCampaignRateControlsModal() {
+    const modal = document.getElementById('campaignRateControlsModal');
+    if (modal) modal.remove();
+}
+
+// Auto-load configuration when settings tab is opened
+function showIPPoolTab(tabName) {
+    // Hide all content
+    document.querySelectorAll('.ippool-content').forEach(content => {
+        content.classList.add('hidden');
+    });
+    
+    // Show selected content
+    const content = document.getElementById(`ippool-content-${tabName}`);
+    if (content) {
+        content.classList.remove('hidden');
+        
+        // Auto-load risk configuration when settings tab is opened
+        if (tabName === 'settings') {
+            loadRiskConfiguration();
+        }
+    }
+    
+    // Update tab buttons
+    document.querySelectorAll('.ippool-tab').forEach(tab => {
+        tab.classList.remove('bg-blue-600');
+        tab.classList.add('bg-gray-700', 'hover:bg-gray-600');
+    });
+    
+    const activeTab = document.getElementById(`ippool-tab-${tabName}`);
+    if (activeTab) {
+        activeTab.classList.remove('bg-gray-700', 'hover:bg-gray-600');
+        activeTab.classList.add('bg-blue-600');
+    }
+}
