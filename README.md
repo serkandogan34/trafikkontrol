@@ -1,7 +1,7 @@
 # Traffic Management Platform
 
 ## URLs
-- **Production**: https://3000-iuz67e85qrayj44kdkmho-6532622b.e2b.dev
+- **Production**: https://3000-ib447iqeyssiw7k0gdxos-6532622b.e2b.dev
 - **Login**: admin / admin123
 - **GitHub**: [serkandogan34/trafikkontrol](https://github.com/serkandogan34/trafikkontrol)
 
