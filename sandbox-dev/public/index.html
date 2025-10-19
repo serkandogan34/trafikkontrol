@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traffic Management Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <i class="fas fa-traffic-light"></i>
+                <h2>Traffic Manager</h2>
+            </div>
+            <button class="toggle-btn" id="sidebarToggle">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+
+        <nav class="sidebar-nav">
+            <a href="/" class="nav-item active" data-page="dashboard">
+                <i class="fas fa-chart-line"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="/domains.html" class="nav-item" data-page="domains">
+                <i class="fas fa-globe"></i>
+                <span>Domains</span>
+            </a>
+            <a href="/traffic.html" class="nav-item" data-page="traffic">
+                <i class="fas fa-exchange-alt"></i>
+                <span>Traffic Monitor</span>
+            </a>
+            <a href="/analytics.html" class="nav-item" data-page="analytics">
+                <i class="fas fa-robot"></i>
+                <span>Bot Analytics</span>
+            </a>
+            <a href="#" class="nav-item" data-page="campaigns">
+                <i class="fas fa-bullhorn"></i>
+                <span>Campaigns</span>
+            </a>
+            <a href="#" class="nav-item" data-page="settings">
+                <i class="fas fa-cog"></i>
+                <span>Settings</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-info">
+                <div class="user-avatar">
+                    <i class="fas fa-user"></i>
+                </div>
+                <div class="user-details">
+                    <p class="user-name">Admin User</p>
+                    <p class="user-role">Administrator</p>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Top Header -->
+        <header class="top-header">
+            <div class="header-left">
+                <button class="mobile-menu-btn" id="mobileMenuBtn">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <h1 class="page-title">Dashboard Overview</h1>
+            </div>
+            <div class="header-right">
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" placeholder="Search domains...">
+                </div>
+                <button class="notification-btn">
+                    <i class="fas fa-bell"></i>
+                    <span class="notification-badge">3</span>
+                </button>
+                <button class="refresh-btn" id="refreshBtn">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Dashboard Content -->
+        <div class="dashboard-container">
+            <!-- Statistics Cards -->
+            <section class="stats-grid">
+                <div class="stat-card stat-card-primary">
+                    <div class="stat-icon">
+                        <i class="fas fa-globe"></i>
+                    </div>
+                    <div class="stat-details">
+                        <p class="stat-label">Total Domains</p>
+                        <h3 class="stat-value" id="totalDomains">-</h3>
+                        <div class="stat-info">
+                            <span class="stat-badge badge-success">
+                                <i class="fas fa-check-circle"></i> 
+                                <span id="activeDomains">-</span> Active
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stat-card stat-card-success">
+                    <div class="stat-icon">
+                        <i class="fas fa-chart-bar"></i>
+                    </div>
+                    <div class="stat-details">
+                        <p class="stat-label">Total Requests</p>
+                        <h3 class="stat-value" id="totalRequests">-</h3>
+                        <div class="stat-info">
+                            <span class="stat-badge badge-info">
+                                <i class="fas fa-arrow-up"></i> 
+                                Last 24h: <span id="requests24h">-</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stat-card stat-card-warning">
+                    <div class="stat-icon">
+                        <i class="fas fa-robot"></i>
+                    </div>
+                    <div class="stat-details">
+                        <p class="stat-label">Bot Detection</p>
+                        <h3 class="stat-value" id="botPercentage">-%</h3>
+                        <div class="stat-info">
+                            <span class="stat-badge badge-warning">
+                                <i class="fas fa-shield-alt"></i> 
+                                Blocked: <span id="botsBlocked">-</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stat-card stat-card-danger">
+                    <div class="stat-icon">
+                        <i class="fas fa-tachometer-alt"></i>
+                    </div>
+                    <div class="stat-details">
+                        <p class="stat-label">Avg Response Time</p>
+                        <h3 class="stat-value" id="avgResponseTime">-ms</h3>
+                        <div class="stat-info">
+                            <span class="stat-badge badge-success">
+                                <i class="fas fa-check"></i> 
+                                Healthy
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Charts Section -->
+            <section class="charts-section">
+                <div class="chart-container">
+                    <div class="chart-header">
+                        <h3>Traffic Overview</h3>
+                        <div class="chart-controls">
+                            <button class="btn-small" data-period="24h">24h</button>
+                            <button class="btn-small active" data-period="7d">7d</button>
+                            <button class="btn-small" data-period="30d">30d</button>
+                        </div>
+                    </div>
+                    <div class="chart-body">
+                        <canvas id="trafficChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-container">
+                    <div class="chart-header">
+                        <h3>Backend Distribution</h3>
+                    </div>
+                    <div class="chart-body">
+                        <canvas id="backendChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Recent Traffic & Backend Stats -->
+            <section class="data-section">
+                <div class="data-card">
+                    <div class="data-card-header">
+                        <h3>Recent Traffic</h3>
+                        <button class="btn-link" id="viewAllTraffic">View All</button>
+                    </div>
+                    <div class="data-card-body">
+                        <div class="table-responsive">
+                            <table class="data-table" id="recentTrafficTable">
+                                <thead>
+                                    <tr>
+                                        <th>Domain</th>
+                                        <th>IP Address</th>
+                                        <th>Bot Score</th>
+                                        <th>Backend</th>
+                                        <th>Time</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td colspan="5" class="text-center">
+                                            <div class="loading-spinner">
+                                                <i class="fas fa-spinner fa-spin"></i> Loading...
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="data-card">
+                    <div class="data-card-header">
+                        <h3>Backend Performance</h3>
+                    </div>
+                    <div class="data-card-body">
+                        <div class="backend-stats">
+                            <div class="backend-stat-item">
+                                <div class="backend-stat-header">
+                                    <span class="backend-label">
+                                        <i class="fas fa-circle text-success"></i> Clean Backend
+                                    </span>
+                                    <span class="backend-percentage" id="cleanPercentage">-%</span>
+                                </div>
+                                <div class="progress-bar">
+                                    <div class="progress-fill bg-success" id="cleanProgress" style="width: 0%"></div>
+                                </div>
+                                <div class="backend-stat-footer">
+                                    <span id="cleanCount">-</span> requests
+                                </div>
+                            </div>
+
+                            <div class="backend-stat-item">
+                                <div class="backend-stat-header">
+                                    <span class="backend-label">
+                                        <i class="fas fa-circle text-warning"></i> Gray Backend
+                                    </span>
+                                    <span class="backend-percentage" id="grayPercentage">-%</span>
+                                </div>
+                                <div class="progress-bar">
+                                    <div class="progress-fill bg-warning" id="grayProgress" style="width: 0%"></div>
+                                </div>
+                                <div class="backend-stat-footer">
+                                    <span id="grayCount">-</span> requests
+                                </div>
+                            </div>
+
+                            <div class="backend-stat-item">
+                                <div class="backend-stat-header">
+                                    <span class="backend-label">
+                                        <i class="fas fa-circle text-danger"></i> Aggressive Backend
+                                    </span>
+                                    <span class="backend-percentage" id="aggressivePercentage">-%</span>
+                                </div>
+                                <div class="progress-bar">
+                                    <div class="progress-fill bg-danger" id="aggressiveProgress" style="width: 0%"></div>
+                                </div>
+                                <div class="backend-stat-footer">
+                                    <span id="aggressiveCount">-</span> requests
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- System Status -->
+            <section class="status-section">
+                <div class="status-card">
+                    <h3>System Status</h3>
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <i class="fas fa-database text-success"></i>
+                            <span>Database</span>
+                            <span class="status-badge badge-success">Online</span>
+                        </div>
+                        <div class="status-item">
+                            <i class="fas fa-server text-success"></i>
+                            <span>API Server</span>
+                            <span class="status-badge badge-success">Healthy</span>
+                        </div>
+                        <div class="status-item">
+                            <i class="fas fa-shield-alt text-success"></i>
+                            <span>Bot Detection</span>
+                            <span class="status-badge badge-success">Active</span>
+                        </div>
+                        <div class="status-item">
+                            <i class="fas fa-chart-line text-success"></i>
+                            <span>Analytics</span>
+                            <span class="status-badge badge-success">Running</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Toast Notification Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

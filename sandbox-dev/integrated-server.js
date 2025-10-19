@@ -14,6 +14,8 @@
  */
 
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { getInstance as getDatabase } from './database/sqlite/connection.js';
 import {
   DomainService,
@@ -43,6 +45,10 @@ import {
   asyncHandler
 } from './middleware/index.js';
 
+// Get __dirname equivalent in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 const PORT = 3001;
 
@@ -68,15 +74,19 @@ app.use(cors({
   credentials: true
 }));
 
-// 5. Security Headers
+// 5. Security Headers (Disabled CSP for dashboard inline scripts)
 app.use(securityHeaders({
-  csp: true,
+  csp: false, // Disabled to allow dashboard inline scripts
   hsts: false, // Disable for development
   frameguard: true,
   xssFilter: true
 }));
 
-// 6. Rate Limiting (applied globally)
+// 6. Static Files (Dashboard)
+app.use('/static', express.static(path.join(__dirname, 'public/static')));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// 7. Rate Limiting (applied globally)
 app.use(relaxedRateLimiter);
 
 // ========================================
@@ -112,7 +122,7 @@ function sendError(res, status, code, message) {
 
 app.get('/api/v1/health', (req, res) => {
   try {
-    const tables = db.getTables ? dbConnection.getTables() : [];
+    const tables = dbConnection.getTables();
     sendSuccess(res, {
       status: 'healthy',
       version: '1.0.0',
@@ -345,24 +355,43 @@ app.post('/api/v1/traffic/log', async (req, res) => {
   }
 });
 
-app.get('/api/v1/traffic/recent', async (req, res) => {
+app.get('/api/v1/traffic-recent', (req, res) => {
   try {
-    const minutes = parseInt(req.query.minutes) || 60;
-    const limit = parseInt(req.query.limit) || 100;
+    const limit = parseInt(req.query.limit) || 10;
     
-    const logs = await trafficRoutingService.getRecentTraffic(minutes, limit);
+    console.log('[TRAFFIC RECENT] Endpoint hit! Limit:', limit);
+    console.log('[TRAFFIC RECENT] DB:', typeof db, !!db);
     
-    const data = logs.map(log => ({
-      id: typeof log.get === 'function' ? log.getId() : log.id,
-      domain_name: typeof log.get === 'function' ? log.get('domain_name') : log.domain_name,
-      visitor_ip: typeof log.get === 'function' ? log.get('visitor_ip') : log.visitor_ip,
-      backend_used: typeof log.get === 'function' ? log.get('backend_used') : log.backend_used,
-      bot_score: typeof log.get === 'function' ? log.get('bot_score') : log.bot_score,
-      response_time: typeof log.get === 'function' ? log.get('response_time') : log.response_time
-    }));
+    if (!db) {
+      console.error('[TRAFFIC RECENT] DB is null/undefined!');
+      return sendError(res, 500, 'DATABASE_ERROR', 'Database not connected');
+    }
     
-    sendSuccess(res, data);
+    // Get recent traffic directly from database (for demo data that may be old)
+    const sql = `
+      SELECT 
+        tl.id,
+        d.name as domain_name,
+        tl.visitor_ip,
+        tl.backend_used,
+        tl.bot_score,
+        tl.response_time,
+        tl.request_time
+      FROM traffic_logs tl
+      LEFT JOIN domains d ON tl.domain_id = d.id
+      ORDER BY tl.request_time DESC
+      LIMIT ?
+    `;
+    
+    const stmt = db.prepare(sql);
+    const rows = stmt.all(limit);
+    
+    console.log('[TRAFFIC RECENT] Rows found:', rows.length);
+    
+    sendSuccess(res, rows);
   } catch (error) {
+    console.error('[TRAFFIC RECENT] Error:', error.message);
+    console.error('[TRAFFIC RECENT] Stack:', error.stack);
     sendError(res, 500, 'INTERNAL_ERROR', error.message);
   }
 });
@@ -395,12 +424,50 @@ app.get('/api/v1/analytics/realtime', async (req, res) => {
 
 app.get('/api/v1/analytics/backends', async (req, res) => {
   try {
-    const domainId = parseInt(req.query.domain_id);
+    const domainId = req.query.domain_id ? parseInt(req.query.domain_id) : null;
     
+    // If no domain_id, get summary for all domains
     if (!domainId) {
-      return sendError(res, 400, 'VALIDATION_ERROR', 'domain_id is required');
+      const allTraffic = await trafficRoutingService.getRecentTraffic(1000);
+      
+      // Count by backend
+      const backendCounts = {
+        clean: 0,
+        gray: 0,
+        aggressive: 0
+      };
+      
+      allTraffic.forEach(log => {
+        const backend = log.get('backend_used');
+        if (backendCounts.hasOwnProperty(backend)) {
+          backendCounts[backend]++;
+        }
+      });
+      
+      const totalRequests = backendCounts.clean + backendCounts.gray + backendCounts.aggressive;
+      
+      const distribution = {
+        clean: {
+          count: backendCounts.clean,
+          percentage: totalRequests > 0 ? (backendCounts.clean / totalRequests) * 100 : 0
+        },
+        gray: {
+          count: backendCounts.gray,
+          percentage: totalRequests > 0 ? (backendCounts.gray / totalRequests) * 100 : 0
+        },
+        aggressive: {
+          count: backendCounts.aggressive,
+          percentage: totalRequests > 0 ? (backendCounts.aggressive / totalRequests) * 100 : 0
+        }
+      };
+      
+      return sendSuccess(res, {
+        totalRequests,
+        distribution
+      });
     }
     
+    // Domain-specific backend stats
     const dateRange = {};
     if (req.query.start_date) dateRange.startDate = req.query.start_date;
     if (req.query.end_date) dateRange.endDate = req.query.end_date;
