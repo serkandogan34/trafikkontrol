@@ -17,6 +17,7 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.0.4",
     "better-sqlite3": "^12.4.1",
+    "express": "^5.1.0",
     "hono": "^4.9.9",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
