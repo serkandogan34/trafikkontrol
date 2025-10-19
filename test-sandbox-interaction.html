@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sandbox Dashboard Test</title>
+</head>
+<body>
+    <h1>Sandbox Dashboard Interactive Test</h1>
+    <p>Dashboard URL: <a href="https://8080-i9h7vc6cfz7i4pxtmkcbs-ad490db5.sandbox.novita.ai/dashboard" target="_blank">Open Dashboard</a></p>
+    
+    <h2>Test Adımları:</h2>
+    <ol>
+        <li>Dashboard'u aç</li>
+        <li>Sağ üst köşede F12 ile Console'u aç</li>
+        <li>Console'da şunu yaz: <code>showSection('traffic')</code></li>
+        <li>Traffic sekmesine geçiş yapmalı</li>
+        <li>Butonlara tıkla ve console'u izle</li>
+    </ol>
+    
+    <h2>Debug Komutları:</h2>
+    <pre>
+// JavaScript çalışıyor mu?
+console.log(typeof showSection)  // "function" dönmeli
+
+// Token var mı?
+console.log(token)  // "demo" olmalı
+
+// Domains yükle
+loadDomains()  // API çağrısı yapar
+
+// Manuel section değiştir
+showSection('traffic')
+showSection('dns')
+showSection('nginx')
+    </pre>
+    
+    <h2>Beklenen Sonuç:</h2>
+    <p>✅ showSection fonksiyonu tanımlı olmalı</p>
+    <p>✅ token = "demo" olmalı</p>
+    <p>✅ API çağrıları çalışmalı</p>
+    <p>✅ Butonlar section'ları değiştirmeli</p>
+</body>
+</html>
