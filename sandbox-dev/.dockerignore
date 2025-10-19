@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+
+# Development files
+demo-server.js
+*.test.js
+tests/
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database files (use volumes instead)
+*.db
+*.db-shm
+*.db-wal
+
+# Temporary files
+tmp/
+temp/
+*.tmp
