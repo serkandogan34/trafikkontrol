@@ -1,0 +1,200 @@
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">Protokoller</label>
+                                        <div class="flex space-x-4">
+                                            <label class="flex items-center">
+                                                <input type="checkbox" name="health-protocols" value="https" checked class="mr-2">
+                                                HTTPS
+                                            </label>
+                                            <label class="flex items-center">
+                                                <input type="checkbox" name="health-protocols" value="http" class="mr-2">
+                                                HTTP
+                                            </label>
+                                            <label class="flex items-center">
+                                                <input type="checkbox" name="health-protocols" value="tcp" class="mr-2">
+                                                TCP
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <button onclick="performAdvancedHealthCheck()" 
+                                            class="w-full bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg">
+                                        <i class="fas fa-stethoscope mr-2"></i>Health Check Başlat
+                                    </button>
+                                </div>
+                                <div id="health-results" class="text-sm max-h-64 overflow-y-auto">
+                                    <div class="bg-gray-600 p-3 rounded border-2 border-dashed border-gray-500 text-center text-gray-400">
+                                        Health check sonuçları burada görünecek
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Security Analysis Section -->
+                        <div id="advanced-dns-security" class="advanced-dns-section hidden bg-gray-700 p-4 rounded-lg">
+                            <h4 class="font-semibold text-purple-300 mb-3">
+                                <i class="fas fa-shield-alt mr-2"></i>DNS Güvenlik Analizi
+                            </h4>
+                            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                <div class="space-y-4">
+                                    <button onclick="runBotDetectionAnalysis()" 
+                                            class="w-full bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded-lg">
+                                        <i class="fas fa-robot mr-2"></i>Bot Detection Analizi
+                                    </button>
+                                    <button onclick="runSecurityAnalysis()" 
+                                            class="w-full bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg">
+                                        <i class="fas fa-scan mr-2"></i>Güvenlik Taraması
+                                    </button>
+                                    <div id="bot-detection-results" class="text-sm">
+                                        <div class="bg-gray-600 p-3 rounded border-2 border-dashed border-gray-500 text-center text-gray-400">
+                                            Bot detection analizi burada görünecek
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="security-analysis-results" class="text-sm">
+                                    <div class="bg-gray-600 p-3 rounded border-2 border-dashed border-gray-500 text-center text-gray-400">
+                                        Güvenlik analizi sonuçları burada görünecek
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Load Balancing Section -->
+                        <div id="advanced-dns-loadbalancing" class="advanced-dns-section hidden bg-gray-700 p-4 rounded-lg">
+                            <h4 class="font-semibold text-purple-300 mb-3">
+                                <i class="fas fa-balance-scale mr-2"></i>DNS Load Balancing
+                            </h4>
+                            <div id="load-balancing-info">
+                                <div class="bg-gray-600 p-3 rounded border-2 border-dashed border-gray-500 text-center text-gray-400">
+                                    <i class="fas fa-spinner fa-spin mr-2"></i>Load balancing bilgileri yükleniyor...
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Cache Management Section -->
+                        <div id="advanced-dns-cache" class="advanced-dns-section hidden bg-gray-700 p-4 rounded-lg">
+                            <h4 class="font-semibold text-purple-300 mb-3">
+                                <i class="fas fa-database mr-2"></i>DNS Cache Management
+                            </h4>
+                            <div id="cache-statistics">
+                                <div class="bg-gray-600 p-3 rounded border-2 border-dashed border-gray-500 text-center text-gray-400">
+                                    <i class="fas fa-spinner fa-spin mr-2"></i>Cache istatistikleri yükleniyor...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Deploy Section -->
+            <div id="section-deploy" class="section hidden">
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">
+                            <i class="fas fa-rocket mr-2 text-blue-400"></i>
+                            Deployment & Infrastructure
+                        </h2>
+                        <div class="flex space-x-2">
+                            <button onclick="refreshDeploymentStatus()" 
+                                    class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium">
+                                <i class="fas fa-sync-alt mr-2"></i>Status Yenile
+                            </button>
+                            <button onclick="exportDeploymentConfig()" 
+                                    class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg font-medium">
+                                <i class="fas fa-download mr-2"></i>Config Export
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Deployment Status Overview -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                        <div class="bg-gray-700 p-4 rounded-lg border-l-4 border-green-500">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-gray-300 text-sm">Aktif Sunucular</p>
+                                    <p class="text-2xl font-bold text-green-400" id="active-servers-count">0</p>
+                                </div>
+                                <i class="fas fa-server text-green-400 text-2xl"></i>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-700 p-4 rounded-lg border-l-4 border-blue-500">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-gray-300 text-sm">Deploy Edilen Domainler</p>
+                                    <p class="text-2xl font-bold text-blue-400" id="deployed-domains-count">0</p>
+                                </div>
+                                <i class="fas fa-globe text-blue-400 text-2xl"></i>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-700 p-4 rounded-lg border-l-4 border-yellow-500">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-gray-300 text-sm">Pending Deployments</p>
+                                    <p class="text-2xl font-bold text-yellow-400" id="pending-deployments-count">0</p>
+                                </div>
+                                <i class="fas fa-clock text-yellow-400 text-2xl"></i>
+                            </div>
+                        </div>
+                        
+                        <div class="bg-gray-700 p-4 rounded-lg border-l-4 border-purple-500">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <p class="text-gray-300 text-sm">Ortalama Response</p>
+                                    <p class="text-2xl font-bold text-purple-400" id="avg-response-time">0ms</p>
+                                </div>
+                                <i class="fas fa-tachometer-alt text-purple-400 text-2xl"></i>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Deployment Actions -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                        <!-- Quick Deploy -->
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <h3 class="text-lg font-semibold mb-4 text-blue-300">
+                                <i class="fas fa-bolt mr-2"></i>Quick Deploy
+                            </h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-2">Deploy Target</label>
+                                    <select id="deploy-target" class="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-lg text-white">
+                                        <option value="production">Production Server</option>
+                                        <option value="staging">Staging Environment</option>
+                                        <option value="development">Development Server</option>
+                                        <option value="custom">Custom Server</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-300 mb-2">Deployment Type</label>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <label class="flex items-center space-x-2">
+                                            <input type="radio" name="deploy-type" value="nginx" checked class="text-blue-500">
+                                            <span class="text-sm">NGINX Config</span>
+                                        </label>
+                                        <label class="flex items-center space-x-2">
+                                            <input type="radio" name="deploy-type" value="dns" class="text-blue-500">
+                                            <span class="text-sm">DNS Records</span>
+                                        </label>
+                                        <label class="flex items-center space-x-2">
+                                            <input type="radio" name="deploy-type" value="ssl" class="text-blue-500">
+                                            <span class="text-sm">SSL Certificates</span>
+                                        </label>
+                                        <label class="flex items-center space-x-2">
+                                            <input type="radio" name="deploy-type" value="full" class="text-blue-500">
+                                            <span class="text-sm">Full Stack</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                <button onclick="executeQuickDeploy()" 
+                                        class="w-full bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg">
+                                    <i class="fas fa-rocket mr-2"></i>Deploy Now
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Server Health Check -->
+                        <div class="bg-gray-700 p-4 rounded-lg">
+                            <h3 class="text-lg font-semibold mb-4 text-green-300">
+                                <i class="fas fa-heartbeat mr-2"></i>Server Health Check
+                            </h3>
+                            <div class="space-y-4">
+                                <div>
