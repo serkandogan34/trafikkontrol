@@ -48,5 +48,10 @@ Thumbs.db
 # Backup files
 *.backup
 *.bak
-*.tar.gz
 *.zip
+
+# Allow important backups in backups/ directory
+!backups/*.tar.gz
+
+# Ignore extracted analysis
+analysis/trafik-kontrol/webapp/
