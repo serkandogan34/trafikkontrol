@@ -55,3 +55,8 @@ Thumbs.db
 
 # Ignore extracted analysis
 analysis/trafik-kontrol/webapp/
+
+# SQLite database runtime files
+*.db-shm
+*.db-wal
+*.db-journal
