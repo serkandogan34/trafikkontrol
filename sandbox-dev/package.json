@@ -16,6 +16,7 @@
     "@types/react-router-dom": "^5.3.3",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.0.4",
+    "better-sqlite3": "^12.4.1",
     "hono": "^4.9.9",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
